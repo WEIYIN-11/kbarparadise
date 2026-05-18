@@ -1,0 +1,9 @@
+node_modules/
+.firebase/
+.firebaserc.local
+*.log
+.DS_Store
+
+# 歷史 K 棒資料（用 npm run fetch 重新抓即可，避免 repo 過肥）
+data/
+

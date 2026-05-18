@@ -1,0 +1,30 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Whitelist: a logged-in user may only read their own entry.
+    // Doc IDs are lowercase emails. Add students manually in Firebase console.
+    match /whitelist/{email} {
+      allow read: if request.auth != null
+                  && request.auth.token.email != null
+                  && request.auth.token.email.lower() == email;
+      allow write: if false; // managed via Firebase console only
+    }
+
+    // User data: only the owner can read/write their own state.
+    match /users/{uid}/{path=**} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Public share links (read-only views for coaches).
+    // The `id` is a random token; anyone with the link may read.
+    // Only the owning student may create/update/delete their own shares.
+    match /shares/{shareId} {
+      allow read: if true;
+      allow create: if request.auth != null
+                    && request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if request.auth != null
+                            && resource.data.ownerUid == request.auth.uid;
+    }
+  }
+}

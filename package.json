@@ -1,0 +1,14 @@
+{
+  "name": "練功房",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "交易模擬訓練工具 - 練功房",
+  "scripts": {
+    "fetch": "node scripts/fetch-data.mjs",
+    "fetch:btc": "node scripts/fetch-data.mjs btc",
+    "fetch:nq": "node scripts/fetch-data.mjs nq",
+    "fetch:txf": "node scripts/fetch-data.mjs txf",
+    "serve": "npx http-server . -p 8081 -c-1"
+  }
+}
