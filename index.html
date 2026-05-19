@@ -1213,8 +1213,17 @@ input, textarea { user-select: text; }
           </div>
 
           <div class="settings-section">
+            <h3>分享連結（給教練看）</h3>
+            <div id="shares-list" style="margin-bottom:8px;"></div>
+            <button class="btn-secondary" id="btn-create-share">+ 建立新分享</button>
+            <div class="field-hint" style="margin-top:6px;">
+              產生唯讀連結，教練不用登入即可看你的績效與全部交易紀錄。可隨時更新快照或撤銷。
+            </div>
+          </div>
+
+          <div class="settings-section">
             <h3>資料管理</h3>
-            <button class="btn-secondary" id="btn-export-json" style="margin-bottom:6px;">匯出交易紀錄 JSON（給教練）</button>
+            <button class="btn-secondary" id="btn-export-json" style="margin-bottom:6px;">匯出交易紀錄 JSON</button>
             <br>
             <button class="btn-danger" id="btn-clear-all">清除所有模擬紀錄</button>
           </div>
@@ -1231,6 +1240,8 @@ input, textarea { user-select: text; }
           </div>
 
           <div class="settings-section">
+            <a href="/admin.html" target="_blank" class="btn-secondary" style="text-decoration:none;display:inline-block;margin-bottom:6px;">🛠 後台管理（僅管理員）</a>
+            <br>
             <button class="btn-secondary" id="btn-signout">登出</button>
           </div>
         </div>
@@ -1464,6 +1475,8 @@ const state = {
   timeAxisVisible: true,
   selectedDrawingId: null,
   drawingDrag: null,    // { drawingId, mode: 'move'|'anchor', anchorIdx, startTime, startPrice, snapshot }
+  // Share links to coach
+  shares: [],           // [{ id, createdAt, updatedAt }]
   // Drawing templates: per-tool list of presets + currently active id
   drawTemplates: null,  // { trend: [...], hline: [...], rect: [...], fib: [...] }
   activeTplId: { trend: 'tpl-trend-default', hline: 'tpl-hline-default', rect: 'tpl-rect-default', fib: 'tpl-fib-default' },
@@ -3261,6 +3274,7 @@ function switchSidePane(name) {
   if (name === 'trades') renderTrades();
   if (name === 'report') renderReport();
   if (name === 'positions') renderPositions();
+  if (name === 'settings') renderShares();
 }
 
 // ---------- Auth + Firestore sync ----------
@@ -3315,6 +3329,7 @@ async function loadFromFirestore(uid) {
     }
     if (data.drawTemplates && typeof data.drawTemplates === 'object') state.drawTemplates = data.drawTemplates;
     if (data.activeTplId) Object.assign(state.activeTplId, data.activeTplId);
+    if (Array.isArray(data.shares)) state.shares = data.shares;
     return true;
   } catch (e) {
     console.warn('load from Firestore failed:', e);
@@ -3342,8 +3357,131 @@ async function actualFirestoreSave() {
     indicators: state.indicators,
     drawTemplates: state.drawTemplates,
     activeTplId: state.activeTplId,
+    shares: state.shares,
     updatedAt: window.fb.serverTimestamp(),
   });
+}
+
+// ============================================================
+// Share links (coach view)
+// ============================================================
+function genShareId() {
+  const chars = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let s = '';
+  for (let i = 0; i < 12; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return s;
+}
+function shareUrl(id) {
+  return `${location.origin}/share.html?id=${id}`;
+}
+function makeSnapshot() {
+  return {
+    trades: state.trades,
+    positions: state.positions,
+    settings: { balance: state.settings.balance },
+  };
+}
+async function createShare() {
+  if (!state.user) { showToast('需先登入才能分享', 'error'); return; }
+  const id = genShareId();
+  const ref = window.fb.doc(window.fb.db, 'shares', id);
+  try {
+    await window.fb.setDoc(ref, {
+      ownerUid: state.user.uid,
+      ownerName: state.user.name || state.user.email,
+      ownerEmail: state.user.email,
+      createdAt: window.fb.serverTimestamp(),
+      updatedAt: window.fb.serverTimestamp(),
+      snapshot: makeSnapshot(),
+    });
+    state.shares = state.shares || [];
+    state.shares.unshift({ id, createdAt: Date.now(), updatedAt: Date.now() });
+    saveStorage();
+    renderShares();
+    // Copy to clipboard
+    try { await navigator.clipboard.writeText(shareUrl(id)); } catch {}
+    showToast('✓ 已建立並複製連結', 'success');
+  } catch (e) {
+    console.error(e);
+    showToast('建立失敗：' + (e.message || e.code), 'error');
+  }
+}
+async function updateShareSnapshot(id) {
+  if (!state.user) return;
+  try {
+    await window.fb.setDoc(
+      window.fb.doc(window.fb.db, 'shares', id),
+      {
+        ownerUid: state.user.uid,
+        ownerName: state.user.name || state.user.email,
+        ownerEmail: state.user.email,
+        updatedAt: window.fb.serverTimestamp(),
+        snapshot: makeSnapshot(),
+      },
+      { merge: true }
+    );
+    const sh = state.shares.find(s => s.id === id);
+    if (sh) sh.updatedAt = Date.now();
+    saveStorage();
+    renderShares();
+    showToast('✓ 已更新快照', 'success');
+  } catch (e) {
+    console.error(e);
+    showToast('更新失敗', 'error');
+  }
+}
+async function revokeShare(id) {
+  if (!confirm('撤銷後教練的連結會立刻失效，確定？')) return;
+  try {
+    await window.fb.deleteDoc(window.fb.doc(window.fb.db, 'shares', id));
+    state.shares = (state.shares || []).filter(s => s.id !== id);
+    saveStorage();
+    renderShares();
+    showToast('已撤銷', 'success');
+  } catch (e) {
+    console.error(e);
+    showToast('撤銷失敗', 'error');
+  }
+}
+function renderShares() {
+  const cont = $('shares-list');
+  if (!cont) return;
+  const arr = state.shares || [];
+  if (!arr.length) {
+    cont.innerHTML = '<div class="field-hint">尚未建立分享連結</div>';
+    return;
+  }
+  cont.innerHTML = arr.map(s => `
+    <div style="background:var(--bg-3);border-radius:8px;padding:10px;margin-bottom:6px;font-size:12px;">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+        <input type="text" readonly value="${shareUrl(s.id)}" style="flex:1;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:6px 8px;font-size:11px;color:var(--text);">
+        <button class="btn-secondary" data-copy-share="${s.id}" style="padding:6px 10px;">複製</button>
+      </div>
+      <div style="display:flex;justify-content:space-between;color:var(--text-3);font-size:11px;margin-bottom:6px;">
+        <span>建立 ${new Date(s.createdAt).toLocaleString('zh-Hant',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
+        <span>更新 ${new Date(s.updatedAt).toLocaleString('zh-Hant',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
+      </div>
+      <div style="display:flex;gap:6px;">
+        <button class="btn-secondary" data-update-share="${s.id}" style="flex:1;font-size:11px;">更新快照</button>
+        <button class="btn-danger" data-revoke-share="${s.id}" style="flex:1;font-size:11px;">撤銷</button>
+      </div>
+    </div>
+  `).join('');
+  cont.querySelectorAll('[data-copy-share]').forEach(b =>
+    b.addEventListener('click', async () => {
+      const id = b.dataset.copyShare;
+      try {
+        await navigator.clipboard.writeText(shareUrl(id));
+        showToast('已複製連結', 'success');
+      } catch { showToast('複製失敗，請手動選取', 'error'); }
+    })
+  );
+  cont.querySelectorAll('[data-update-share]').forEach(b =>
+    b.addEventListener('click', () => updateShareSnapshot(b.dataset.updateShare))
+  );
+  cont.querySelectorAll('[data-revoke-share]').forEach(b =>
+    b.addEventListener('click', () => revokeShare(b.dataset.revokeShare))
+  );
 }
 
 // Login flow
@@ -3501,6 +3639,7 @@ function wireEvents() {
   $('btn-save-settings').addEventListener('click', saveSettingsAction);
   $('btn-export-json').addEventListener('click', exportJson);
   $('btn-clear-all').addEventListener('click', clearAll);
+  $('btn-create-share').addEventListener('click', createShare);
   $('btn-signout').addEventListener('click', () => {
     if (confirm('確定要登出？')) doSignOut();
   });
