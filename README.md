@@ -66,10 +66,12 @@
 - 持倉中的部位同樣顯示紅綠止盈/止損色帶，SL/TP 線可直接拖曳（原有功能）
 - 介面配色完全比照 TradingView 深色主題（#131722 底、#089981/#f23645 紅綠 K）
 
-### 雲端同步（Firebase）
-- Google 帳號登入
-- Email 白名單（教練透過 Firebase console 維護）
-- 跨裝置同步：交易、畫線、指標設定、模板都即時上雲
+### 帳號與雲端同步（方舟藍圖 Supabase，完全整合）
+- **與方舟藍圖同一組帳號**：Google 登入或 Email magic link
+- **白名單＝方舟訂閱會員**：`members` 表 tier ∈ 付費方案且未過期（或 admin）即可進入，
+  不需要手動維護白名單；訂閱過期自動擋
+- 跨裝置同步：交易、畫線、指標設定、模板、盲測進度都存 `tradersim_states`（debounce 1.5s upsert）
+- **教練檢視**：方舟後台 `/admin/tradersim` 直接看所有學員的績效摘要、交易明細、盲測歷史
 
 ## 開發指令
 ```bash
@@ -81,56 +83,40 @@ npm run serve
 # 開 http://localhost:8081
 ```
 
-## 部署到 Firebase Hosting
+## 部署（Hosting 仍在 Firebase，資料庫已遷 Supabase）
 
-### 1. 安裝 Firebase CLI（一次即可）
+### 1. 部署網站
 ```bash
-npm install -g firebase-tools
-firebase login
+npx firebase-tools deploy --only hosting
 ```
-
-### 2. 部署 Firestore 規則
-```bash
-firebase deploy --only firestore:rules
-```
-
-### 3. 部署網站
-```bash
-firebase deploy --only hosting
-```
-
 部署後網址：`https://trianingground.web.app`
 
-### 4. 加入學員到白名單
-1. 開 [Firebase Console](https://console.firebase.google.com/) → 選 `trianingground` 專案
-2. Firestore Database → 開始集合 `whitelist`
-3. 每位學員建立一個文件：
-   - **Doc ID**：學員 email（小寫，例：`student@gmail.com`）
-   - **欄位**：可留空，或加 `name: "張三"` `joinedAt: 時間`
+### 2. Supabase 一次性設定（主站專案 `bvmeeupxhbrwtrmuyhqq`）
+1. **套用 migration**：主站 repo 的 `supabase/migrations/0067_tradersim_states.sql`
+   貼到 Supabase Dashboard → SQL Editor 執行（冪等，可重跑）
+2. **Auth Redirect URLs**：Dashboard → Authentication → URL Configuration →
+   Redirect URLs 加入：
+   - `https://trianingground.web.app`
+   - `http://localhost:8081`（本機開發）
 
-### 5. 啟用 Google 登入
-1. Firebase Console → Authentication → Sign-in method
-2. 啟用 **Google** 提供者
-3. Authorized domains 加入：
-   - `localhost`（本機測試）
-   - `trianingground.web.app`（正式網址）
-   - 自訂網域（如有）
+### 3. 學員權限
+不用設定。學員在方舟藍圖是有效訂閱會員（starter/vip/pro/private 未過期）
+就能登入練功房；教練/管理員（`admin_users`）一律放行。
 
-## 資料結構（Firestore）
+## 資料結構（Supabase `tradersim_states`，每學員一列）
 
 ```
-/whitelist/{email}                # 白名單（教練手動維護）
-/users/{uid}/sim/state            # 學員所有資料（單一文件）
-  ├ trades[]                      # 已平倉紀錄（盲測交易帶 blindId 與點值快照 pv）
-  ├ positions[]                   # 未平倉
-  ├ settings { balance }
-  ├ drawings { 'NQ_1h': [...], 'BTC_1d': [...] }
-  ├ indicators { ema, bb, volume, rsi, macd }
-  ├ drawTemplates { trend, hline, rect, fib }
-  ├ activeTplId { ... }
-  └ blind { active, history[] }   # 進行中盲測 + 盲測歷史
-/shares/{shareId}                 # （未來）教練分享連結
+user_id       → auth.users（方舟同一帳號）
+email, display_name                # 反正規化供後台列表
+state (jsonb)                      # 完整模擬器狀態：
+  ├ trades[]                       #   已平倉（盲測交易帶 blindId 與點值快照 pv）
+  ├ positions[] / settings
+  ├ drawings / indicators / drawTemplates / activeTplId
+  └ blind { active, history[] }    #   進行中盲測 + 盲測歷史
+summary (jsonb)                    # 績效摘要（交易數/勝率/盈虧/平均R/盲測場數）
+updated_at
 ```
+RLS：學員只能讀寫自己那列；admin 可讀全部（後台檢視）。
 
 ## 資料來源
 - 加密貨幣: Binance REST API

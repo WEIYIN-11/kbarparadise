@@ -11,42 +11,23 @@
 <!-- lightweight-charts -->
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 
-<!-- Firebase (ES modules) -->
+<!-- Supabase（方舟藍圖同一套帳號系統；anon key 為公開 client key，安全靠 RLS）-->
 <script type="module">
-  import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js';
-  import {
-    getAuth, GoogleAuthProvider,
-    signInWithPopup, signInWithRedirect, getRedirectResult,
-    onAuthStateChanged, signOut,
-  } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js';
-  import {
-    getFirestore, doc, getDoc, setDoc, deleteDoc,
-    collection, serverTimestamp,
-  } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js';
+  import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 
-  const firebaseConfig = {
-    apiKey: "AIzaSyAVLsvNmGxSrE7Qqko3txttsbUHDaPFCys",
-    authDomain: "trianingground.firebaseapp.com",
-    projectId: "trianingground",
-    storageBucket: "trianingground.firebasestorage.app",
-    messagingSenderId: "195611785724",
-    appId: "1:195611785724:web:f07a404babe21d404b1a79"
-  };
+  const SUPABASE_URL = 'https://bvmeeupxhbrwtrmuyhqq.supabase.co';
+  const SUPABASE_ANON_KEY = 'sb_publishable_yVqoWtwJN3QKnEW_f9_sLg_zci7fNbk';
 
-  const app = initializeApp(firebaseConfig);
-  const auth = getAuth(app);
-  const db = getFirestore(app);
-  const provider = new GoogleAuthProvider();
+  window.sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,   // magic link / OAuth 回跳自動處理
+    },
+  });
 
-  window.fb = {
-    auth, db, provider,
-    signInWithPopup, signInWithRedirect, getRedirectResult,
-    onAuthStateChanged, signOut,
-    doc, getDoc, setDoc, deleteDoc, collection, serverTimestamp,
-  };
-
-  // Notify the main script that Firebase is ready
-  window.dispatchEvent(new Event('firebase-ready'));
+  // Notify the main script that Supabase is ready
+  window.dispatchEvent(new Event('supabase-ready'));
 </script>
 
 <style>
@@ -135,6 +116,25 @@ input, textarea { user-select: text; }
   font-size: 13px;
 }
 .btn-guest:hover { color: var(--text); }
+.login-divider {
+  margin: 16px 0 8px;
+  font-size: 11px;
+  color: var(--text-3);
+  display: flex; align-items: center; gap: 8px;
+}
+.login-divider::before, .login-divider::after {
+  content: ''; flex: 1; height: 1px; background: var(--line);
+}
+.login-email-row input {
+  width: 100%;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--text);
+}
+.login-email-row input:focus { border-color: var(--accent); }
 .login-hint {
   margin-top: 20px;
   font-size: 12px;
@@ -1015,15 +1015,20 @@ input, textarea { user-select: text; }
   <div class="login-card">
     <div class="login-logo">📈</div>
     <h1>練功房</h1>
-    <p>歷史 K 棒模擬訓練</p>
+    <p>歷史 K 棒模擬訓練 · 方舟藍圖會員專屬</p>
     <div id="login-error" class="login-error"></div>
     <button id="btn-google" class="btn-google">
       <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
       使用 Google 帳號登入
     </button>
+    <div class="login-divider">或用 Email 收登入連結</div>
+    <div class="login-email-row">
+      <input type="email" id="login-email" placeholder="你在方舟藍圖使用的 Email" autocomplete="email">
+      <button id="btn-magiclink" class="btn-guest" style="margin-top:8px;">寄送登入連結</button>
+    </div>
     <div class="login-hint">
-      此工具僅供教練團隊內部學員使用<br>
-      首次使用請聯絡教練將你的 Email 加入白名單
+      使用<strong>方舟藍圖</strong>同一組帳號登入<br>
+      僅限有效訂閱會員使用；尚未訂閱請先至 ark-blueprint.com
     </div>
   </div>
 </div>
@@ -1347,11 +1352,10 @@ input, textarea { user-select: text; }
           </div>
 
           <div class="settings-section">
-            <h3>分享連結（給教練看）</h3>
-            <div id="shares-list" style="margin-bottom:8px;"></div>
-            <button class="btn-secondary" id="btn-create-share">+ 建立新分享</button>
-            <div class="field-hint" style="margin-top:6px;">
-              產生唯讀連結，教練不用登入即可看你的績效與全部交易紀錄。可隨時更新快照或撤銷。
+            <h3>教練檢視</h3>
+            <div class="field-hint">
+              ✅ 你的交易紀錄與盲測成績會<strong>自動同步</strong>到方舟藍圖，
+              教練可直接在方舟後台查看，不需要另外分享或匯出。
             </div>
           </div>
 
@@ -1379,7 +1383,7 @@ input, textarea { user-select: text; }
           </div>
 
           <div class="settings-section">
-            <a href="/admin.html" target="_blank" class="btn-secondary" style="text-decoration:none;display:inline-block;margin-bottom:6px;">🛠 後台管理（僅管理員）</a>
+            <a href="https://ark-blueprint.com/admin/tradersim" target="_blank" rel="noopener" class="btn-secondary" style="text-decoration:none;display:inline-block;margin-bottom:6px;">🛠 方舟後台（僅教練/管理員）</a>
             <br>
             <button class="btn-secondary" id="btn-signout">登出</button>
           </div>
@@ -1753,7 +1757,6 @@ const state = {
   settings: { balance: 100000 },
   blind: null,          // 進行中盲測 { id, symbol, timeframe, scale, startIndex, endIndex, cursorIndex, playBars, startedAt }
   blindHistory: [],     // 已完成盲測摘要（新到舊）
-  shares: [],           // 教練分享連結 [{ id, createdAt, updatedAt }]
   cache: {},            // { 'NQ_1h': candles, ... }
   user: null,           // { uid, email, name, photoURL } | null
   guestMode: false,
@@ -4544,7 +4547,6 @@ function switchSidePane(name) {
   if (name === 'trades') renderTrades();
   if (name === 'report') renderReport();
   if (name === 'positions') renderPositions();
-  if (name === 'settings') renderShares();
 }
 
 // ---------- Auth + Firestore sync ----------
@@ -4562,217 +4564,149 @@ function setUser(u) {
   }
 }
 
-// Whitelist check: anyone authenticated reads /whitelist/{email}
-async function checkWhitelist(email) {
-  if (!window.fb) return false;
-  const ref = window.fb.doc(window.fb.db, 'whitelist', email.toLowerCase());
+// 會員資格判定：與方舟主站 fetchMembershipOnce 同一套規則
+// （members.tier ∈ 付費方案 且 expires_at 未過期，或 admin_users 有列）
+const PAID_TIERS = ['starter', 'vip', 'pro', 'private'];
+async function fetchMembership(email, uid) {
+  if (!window.sb) return { ok: false, error: 'Supabase 尚未載入' };
   try {
-    const snap = await window.fb.getDoc(ref);
-    return snap.exists();
+    const [memberRes, adminRes] = await Promise.all([
+      window.sb.from('members').select('tier, expires_at').eq('email', email.toLowerCase()).maybeSingle(),
+      window.sb.from('admin_users').select('role').eq('user_id', uid).maybeSingle(),
+    ]);
+    // 查詢錯誤 ≠ 非會員：網路閃斷不能把付費會員擋在門外
+    if (memberRes.error) return { ok: false, error: memberRes.error.message };
+    if (adminRes.error) return { ok: false, error: adminRes.error.message };
+    const isAdmin = !!adminRes.data;
+    let paid = false;
+    if (memberRes.data) {
+      const exp = memberRes.data.expires_at;
+      if (!exp || new Date(exp).getTime() >= Date.now()) {
+        paid = PAID_TIERS.includes(memberRes.data.tier);
+      }
+    }
+    return { ok: true, allowed: isAdmin || paid, isAdmin };
   } catch (e) {
-    console.warn('whitelist check failed:', e);
-    return false;
+    return { ok: false, error: e.message || String(e) };
   }
 }
 
-// Load full user state from Firestore, overlay onto local state
-async function loadFromFirestore(uid) {
-  if (!window.fb) return false;
-  const ref = window.fb.doc(window.fb.db, 'users', uid, 'sim', 'state');
+// Load full user state from Supabase (tradersim_states.state), overlay onto local
+async function loadFromCloud(uid) {
+  if (!window.sb) return false;
   try {
-    const snap = await window.fb.getDoc(ref);
-    if (!snap.exists()) return false;
-    const data = snap.data();
-    if (Array.isArray(data.trades)) state.trades = data.trades;
-    if (Array.isArray(data.positions)) state.positions = data.positions;
-    if (data.settings) Object.assign(state.settings, data.settings);
-    if (data.drawings && typeof data.drawings === 'object') state.drawings = data.drawings;
-    if (data.indicators) mergeIndicators(data.indicators);
-    if (data.drawTemplates && typeof data.drawTemplates === 'object') state.drawTemplates = data.drawTemplates;
-    if (data.activeTplId) Object.assign(state.activeTplId, data.activeTplId);
+    const { data, error } = await window.sb
+      .from('tradersim_states')
+      .select('state')
+      .eq('user_id', uid)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data || !data.state) return false;
+    const s = data.state;
+    if (Array.isArray(s.trades)) state.trades = s.trades;
+    if (Array.isArray(s.positions)) state.positions = s.positions;
+    if (s.settings) Object.assign(state.settings, s.settings);
+    if (s.drawings && typeof s.drawings === 'object') state.drawings = s.drawings;
+    if (s.indicators) mergeIndicators(s.indicators);
+    if (s.drawTemplates && typeof s.drawTemplates === 'object') state.drawTemplates = s.drawTemplates;
+    if (s.activeTplId) Object.assign(state.activeTplId, s.activeTplId);
     fillMissingTemplateTypes();
-    if (data.blind) {
-      if (Array.isArray(data.blind.history)) state.blindHistory = data.blind.history;
-      state.blind = data.blind.active || null;
+    if (s.blind) {
+      if (Array.isArray(s.blind.history)) state.blindHistory = s.blind.history;
+      state.blind = s.blind.active || null;
     }
-    if (Array.isArray(data.shares)) state.shares = data.shares;
     return true;
   } catch (e) {
-    console.warn('load from Firestore failed:', e);
+    console.warn('load from cloud failed:', e);
     return false;
   }
 }
 
-// Debounced Firestore save
-let _fsSaveTimer = null;
-function queueFirestoreSave() {
-  if (!state.user || !window.fb) return;
-  clearTimeout(_fsSaveTimer);
-  _fsSaveTimer = setTimeout(() => {
-    actualFirestoreSave().catch(e => console.warn('Firestore save failed:', e));
-  }, 1500);
-}
-async function actualFirestoreSave() {
-  if (!state.user || !window.fb) return;
-  const ref = window.fb.doc(window.fb.db, 'users', state.user.uid, 'sim', 'state');
-  await window.fb.setDoc(ref, {
-    trades: state.trades,
-    positions: state.positions,
-    settings: state.settings,
-    drawings: state.drawings,
-    indicators: state.indicators,
-    drawTemplates: state.drawTemplates,
-    activeTplId: state.activeTplId,
-    blind: { active: state.blind, history: state.blindHistory },
-    shares: state.shares,
-    updatedAt: window.fb.serverTimestamp(),
-  });
-}
-
-// ============================================================
-// Share links (coach view)
-// ============================================================
-function genShareId() {
-  const chars = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let s = '';
-  for (let i = 0; i < 12; i++) s += chars[Math.floor(Math.random() * chars.length)];
-  return s;
-}
-function shareUrl(id) {
-  return `${location.origin}/share.html?id=${id}`;
-}
-function makeSnapshot() {
+// 給方舟後台列表用的績效摘要（存檔當下算好，admin 不拆大 jsonb）
+function makeSummary() {
+  const t = state.trades;
+  const wins = t.filter(x => x.pnl > 0).length;
   return {
-    trades: state.trades,
-    positions: state.positions,
-    settings: { balance: state.settings.balance },
+    trades: t.length,
+    wins,
+    winRate: t.length ? +(wins / t.length * 100).toFixed(1) : null,
+    totalPnl: +t.reduce((s, x) => s + (x.pnl || 0), 0).toFixed(2),
+    avgR: t.length ? +(t.reduce((s, x) => s + (x.rMultiple || 0), 0) / t.length).toFixed(2) : null,
+    longs: t.filter(x => x.side === 'long').length,
+    shorts: t.filter(x => x.side === 'short').length,
+    openPositions: state.positions.filter(p => p.status === 'open').length,
+    blindSessions: state.blindHistory.length,
+    balance: state.settings.balance,
+    lastTradeAt: t[0]?.exitTime ?? null,
   };
 }
-async function createShare() {
-  if (!state.user) { showToast('需先登入才能分享', 'error'); return; }
-  const id = genShareId();
-  const ref = window.fb.doc(window.fb.db, 'shares', id);
-  try {
-    await window.fb.setDoc(ref, {
-      ownerUid: state.user.uid,
-      ownerName: state.user.name || state.user.email,
-      ownerEmail: state.user.email,
-      createdAt: window.fb.serverTimestamp(),
-      updatedAt: window.fb.serverTimestamp(),
-      snapshot: makeSnapshot(),
-    });
-    state.shares = state.shares || [];
-    state.shares.unshift({ id, createdAt: Date.now(), updatedAt: Date.now() });
-    saveStorage();
-    renderShares();
-    // Copy to clipboard
-    try { await navigator.clipboard.writeText(shareUrl(id)); } catch {}
-    showToast('✓ 已建立並複製連結', 'success');
-  } catch (e) {
-    console.error(e);
-    showToast('建立失敗：' + (e.message || e.code), 'error');
-  }
+
+// Debounced cloud save
+let _cloudSaveTimer = null;
+function queueFirestoreSave() {   // 名稱保留（saveStorage 呼叫點多），實作已換 Supabase
+  if (!state.user || !window.sb) return;
+  clearTimeout(_cloudSaveTimer);
+  _cloudSaveTimer = setTimeout(() => {
+    actualCloudSave().catch(e => console.warn('cloud save failed:', e));
+  }, 1500);
 }
-async function updateShareSnapshot(id) {
-  if (!state.user) return;
-  try {
-    await window.fb.setDoc(
-      window.fb.doc(window.fb.db, 'shares', id),
-      {
-        ownerUid: state.user.uid,
-        ownerName: state.user.name || state.user.email,
-        ownerEmail: state.user.email,
-        updatedAt: window.fb.serverTimestamp(),
-        snapshot: makeSnapshot(),
-      },
-      { merge: true }
-    );
-    const sh = state.shares.find(s => s.id === id);
-    if (sh) sh.updatedAt = Date.now();
-    saveStorage();
-    renderShares();
-    showToast('✓ 已更新快照', 'success');
-  } catch (e) {
-    console.error(e);
-    showToast('更新失敗', 'error');
-  }
-}
-async function revokeShare(id) {
-  if (!confirm('撤銷後教練的連結會立刻失效，確定？')) return;
-  try {
-    await window.fb.deleteDoc(window.fb.doc(window.fb.db, 'shares', id));
-    state.shares = (state.shares || []).filter(s => s.id !== id);
-    saveStorage();
-    renderShares();
-    showToast('已撤銷', 'success');
-  } catch (e) {
-    console.error(e);
-    showToast('撤銷失敗', 'error');
-  }
-}
-function renderShares() {
-  const cont = $('shares-list');
-  if (!cont) return;
-  const arr = state.shares || [];
-  if (!arr.length) {
-    cont.innerHTML = '<div class="field-hint">尚未建立分享連結</div>';
-    return;
-  }
-  cont.innerHTML = arr.map(s => `
-    <div style="background:var(--bg-3);border-radius:8px;padding:10px;margin-bottom:6px;font-size:12px;">
-      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
-        <input type="text" readonly value="${shareUrl(s.id)}" style="flex:1;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:6px 8px;font-size:11px;color:var(--text);">
-        <button class="btn-secondary" data-copy-share="${s.id}" style="padding:6px 10px;">複製</button>
-      </div>
-      <div style="display:flex;justify-content:space-between;color:var(--text-3);font-size:11px;margin-bottom:6px;">
-        <span>建立 ${new Date(s.createdAt).toLocaleString('zh-Hant',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
-        <span>更新 ${new Date(s.updatedAt).toLocaleString('zh-Hant',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
-      </div>
-      <div style="display:flex;gap:6px;">
-        <button class="btn-secondary" data-update-share="${s.id}" style="flex:1;font-size:11px;">更新快照</button>
-        <button class="btn-danger" data-revoke-share="${s.id}" style="flex:1;font-size:11px;">撤銷</button>
-      </div>
-    </div>
-  `).join('');
-  cont.querySelectorAll('[data-copy-share]').forEach(b =>
-    b.addEventListener('click', async () => {
-      const id = b.dataset.copyShare;
-      try {
-        await navigator.clipboard.writeText(shareUrl(id));
-        showToast('已複製連結', 'success');
-      } catch { showToast('複製失敗，請手動選取', 'error'); }
-    })
-  );
-  cont.querySelectorAll('[data-update-share]').forEach(b =>
-    b.addEventListener('click', () => updateShareSnapshot(b.dataset.updateShare))
-  );
-  cont.querySelectorAll('[data-revoke-share]').forEach(b =>
-    b.addEventListener('click', () => revokeShare(b.dataset.revokeShare))
-  );
+async function actualCloudSave() {
+  if (!state.user || !window.sb) return;
+  const { error } = await window.sb.from('tradersim_states').upsert({
+    user_id: state.user.uid,
+    email: state.user.email,
+    display_name: state.user.name || null,
+    state: {
+      trades: state.trades,
+      positions: state.positions,
+      settings: state.settings,
+      drawings: state.drawings,
+      indicators: state.indicators,
+      drawTemplates: state.drawTemplates,
+      activeTplId: state.activeTplId,
+      blind: { active: state.blind, history: state.blindHistory },
+    },
+    summary: makeSummary(),
+    updated_at: new Date().toISOString(),
+  });
+  if (error) throw error;
 }
 
-// Login flow
+// Login flow（方舟藍圖同一套 Supabase 帳號）
 async function doGoogleSignIn() {
-  if (!window.fb) {
-    showLoginError('Firebase 還在載入，請稍後再試');
+  if (!window.sb) {
+    showLoginError('系統還在載入，請稍後再試');
     return;
   }
-  const errEl = $('login-error');
-  errEl.classList.remove('show');
+  $('login-error').classList.remove('show');
   $('btn-google').disabled = true;
-  try {
-    const result = await window.fb.signInWithPopup(window.fb.auth, window.fb.provider);
-    // onAuthStateChanged will continue from here
-    return result;
-  } catch (e) {
-    console.error('Google sign-in failed:', e);
-    let msg = '登入失敗';
-    if (e.code === 'auth/popup-blocked') msg = '請允許彈出視窗後重試';
-    else if (e.code === 'auth/popup-closed-by-user') msg = '已取消登入';
-    else if (e.code === 'auth/unauthorized-domain') msg = '此網域未在 Firebase 授權清單';
-    else if (e.message) msg = '登入失敗：' + e.message;
-    showLoginError(msg);
+  const { error } = await window.sb.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: location.origin },
+  });
+  // 成功會整頁跳轉到 Google；只有失敗會走到這裡
+  if (error) {
+    showLoginError('登入失敗：' + error.message);
     $('btn-google').disabled = false;
+  }
+}
+async function sendMagicLink() {
+  if (!window.sb) { showLoginError('系統還在載入，請稍後再試'); return; }
+  const email = $('login-email').value.trim();
+  if (!email || !email.includes('@')) { showLoginError('請輸入正確的 Email'); return; }
+  $('login-error').classList.remove('show');
+  $('btn-magiclink').disabled = true;
+  $('btn-magiclink').textContent = '寄送中…';
+  const { error } = await window.sb.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: location.origin },
+  });
+  if (error) {
+    showLoginError('寄送失敗：' + error.message);
+    $('btn-magiclink').disabled = false;
+    $('btn-magiclink').textContent = '寄送登入連結';
+  } else {
+    $('btn-magiclink').textContent = '✓ 已寄出，請到信箱點連結';
   }
 }
 function showLoginError(msg) {
@@ -4781,8 +4715,8 @@ function showLoginError(msg) {
   errEl.classList.add('show');
 }
 async function doSignOut() {
-  if (window.fb && window.fb.auth.currentUser) {
-    try { await window.fb.signOut(window.fb.auth); } catch {}
+  if (window.sb) {
+    try { await window.sb.auth.signOut(); } catch {}
   }
   state.user = null;
   setUser(null);
@@ -4790,24 +4724,36 @@ async function doSignOut() {
 }
 
 let _appBooted = false;
-async function handleAuthSuccess(fbUser) {
-  // Whitelist check
-  const ok = await checkWhitelist(fbUser.email);
-  if (!ok) {
-    showLoginError(`${fbUser.email} 不在白名單。請聯絡教練。`);
-    try { await window.fb.signOut(window.fb.auth); } catch {}
+let _handledUid = null;
+async function handleAuthSuccess(sbUser) {
+  if (_handledUid === sbUser.id) return;   // token refresh 等事件重複觸發時跳過
+  _handledUid = sbUser.id;
+  // 會員資格檢查（= 白名單同步方舟訂閱會員）
+  const m = await fetchMembership(sbUser.email, sbUser.id);
+  if (!m.ok) {
+    _handledUid = null;
+    showLoginError('連線異常，請重新整理再試（' + m.error + '）');
     $('btn-google').disabled = false;
     return;
   }
+  if (!m.allowed) {
+    _handledUid = null;
+    showLoginError(`${sbUser.email} 不是方舟藍圖有效訂閱會員。請先至 ark-blueprint.com 訂閱，或聯絡教練。`);
+    try { await window.sb.auth.signOut(); } catch {}
+    $('btn-google').disabled = false;
+    return;
+  }
+  const meta = sbUser.user_metadata || {};
   setUser({
-    uid: fbUser.uid,
-    email: fbUser.email,
-    name: fbUser.displayName || fbUser.email,
-    photoURL: fbUser.photoURL,
+    uid: sbUser.id,
+    email: sbUser.email,
+    name: meta.name || meta.full_name || (sbUser.email ? sbUser.email.split('@')[0] : '會員'),
+    photoURL: meta.avatar_url || meta.picture || null,
+    isAdmin: m.isAdmin,
   });
   // Pull cloud data (if any) — overlays onto local
-  await loadFromFirestore(fbUser.uid);
-  // Persist merged state to localStorage too
+  await loadFromCloud(sbUser.id);
+  // Persist merged state to localStorage too（也會 queue 一次雲端存檔：本地舊資料自動上雲）
   saveStorage();
   hideLogin();
   if (!_appBooted) {
@@ -4823,14 +4769,15 @@ async function handleAuthSuccess(fbUser) {
   }
 }
 
-function setupFirebaseAuthListener() {
-  if (!window.fb) return;
-  window.fb.onAuthStateChanged(window.fb.auth, async (user) => {
-    if (user) {
-      // Already signed in (e.g., page refresh) — go through whitelist + load
-      await handleAuthSuccess(user);
+function setupAuthListener() {
+  if (!window.sb) return;
+  window.sb.auth.onAuthStateChange((event, session) => {
+    if (session && session.user) {
+      // 登入成功 / 頁面重整已有 session / magic link 回跳 — 都走會員檢查 + 載入
+      handleAuthSuccess(session.user);
     }
   });
+  // onAuthStateChange 對既有 session 會發 INITIAL_SESSION，上面已涵蓋
 }
 
 // ---------- Settings actions ----------
@@ -5128,7 +5075,6 @@ function wireEvents() {
   $('btn-save-settings').addEventListener('click', saveSettingsAction);
   $('btn-export-json').addEventListener('click', exportJson);
   $('btn-clear-all').addEventListener('click', clearAll);
-  $('btn-create-share').addEventListener('click', createShare);
   $('btn-signout').addEventListener('click', () => {
     if (confirm('確定要登出？')) doSignOut();
   });
@@ -5146,6 +5092,10 @@ function wireEvents() {
 function wireLogin() {
   $('btn-google').addEventListener('click', () => {
     doGoogleSignIn();
+  });
+  $('btn-magiclink').addEventListener('click', sendMagicLink);
+  $('login-email').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') sendMagicLink();
   });
 }
 
@@ -5576,12 +5526,12 @@ window.addEventListener('DOMContentLoaded', () => {
   showLogin();
 });
 
-// Firebase becomes available asynchronously (ES module import).
+// Supabase becomes available asynchronously (ES module import).
 // Hook auth state once it's ready.
-if (window.fb) {
-  setupFirebaseAuthListener();
+if (window.sb) {
+  setupAuthListener();
 } else {
-  window.addEventListener('firebase-ready', setupFirebaseAuthListener, { once: true });
+  window.addEventListener('supabase-ready', setupAuthListener, { once: true });
 }
 </script>
 </body>
