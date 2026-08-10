@@ -33,7 +33,7 @@ const START_DATE = '2020-01-01';
 const START_TS = new Date(`${START_DATE}T00:00:00Z`).getTime();
 const NOW_TS = Date.now();
 const TWD_USD = 31;   // 概略匯率：台幣計價標的換算 USD 用
-const TOP_N = 20;     // 每類別取成交量前 N 名
+const TOP_N = 30;     // 每類別取成交量前 N 名（湊足約 100 檔標的池）
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const YH = {
