@@ -1,0 +1,8 @@
+scripts
+node_modules
+firebase.json
+firestore.rules
+.firebase
+.claude
+README.md
+data/registry-cache.json

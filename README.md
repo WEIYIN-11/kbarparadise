@@ -83,13 +83,11 @@ npm run serve
 # 開 http://localhost:8081
 ```
 
-## 部署（Hosting 仍在 Firebase，資料庫已遷 Supabase）
+## 部署（Vercel，git push 自動部署）
 
-### 1. 部署網站
-```bash
-npx firebase-tools deploy --only hosting
-```
-部署後網址：`https://trianingground.web.app`
+- 正式站：`https://sim.ark-blueprint.com`（Vercel 專案連結本 repo，push main 即自動部署）
+- `data/` 已納入版控（Vercel 從 git 部署）；更新標的資料：`npm run fetch` → commit → push
+- 舊站 `https://trianingground.web.app`（Firebase Hosting）保留過渡期，可手動 `npx firebase-tools deploy --only hosting` 同步
 
 ### 2. Supabase 一次性設定（主站專案 `bvmeeupxhbrwtrmuyhqq`）
 1. **套用 migration**：主站 repo 的 `supabase/migrations/0067_tradersim_states.sql`
