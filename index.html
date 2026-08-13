@@ -1358,22 +1358,23 @@ input, textarea { user-select: text; }
           </div>
 
           <div class="field">
-            <label>策略標籤</label>
-            <select id="order-strategy">
-              <option value="">— 選擇進場策略 —</option>
-              <option value="突破">突破</option>
-              <option value="回測">回測</option>
-              <option value="轉折">轉折</option>
-              <option value="趨勢順勢">趨勢順勢</option>
-              <option value="逆勢搶反彈">逆勢搶反彈</option>
-              <option value="區間操作">區間操作</option>
-              <option value="新聞事件">新聞事件</option>
-              <option value="其他">其他</option>
-            </select>
+            <label>策略標籤（選填，可自由填寫或從清單挑）</label>
+            <input type="text" id="order-strategy" list="strategy-presets" maxlength="20"
+                   placeholder="例：突破、回測、順勢…">
+            <datalist id="strategy-presets">
+              <option value="突破"></option>
+              <option value="回測"></option>
+              <option value="轉折"></option>
+              <option value="趨勢順勢"></option>
+              <option value="逆勢搶反彈"></option>
+              <option value="區間操作"></option>
+              <option value="新聞事件"></option>
+              <option value="其他"></option>
+            </datalist>
           </div>
 
           <div class="field">
-            <label>進場理由（你看到了什麼）</label>
+            <label>進場理由（選填，寫下你看到了什麼）</label>
             <textarea id="order-reason" placeholder="例：在前高 18500 突破回測，量縮回測不破 5MA…"></textarea>
           </div>
 
@@ -4261,8 +4262,7 @@ function submitOrder() {
   if (!entry || !sl || !tp || !riskPct) { showToast('請填寫進場/停損/停利/風險', 'error'); return; }
   if (side === 'long' && (sl >= entry || tp <= entry)) { showToast('多單方向錯誤', 'error'); return; }
   if (side === 'short' && (sl <= entry || tp >= entry)) { showToast('空單方向錯誤', 'error'); return; }
-  if (!strategy) { showToast('請選擇策略標籤', 'error'); return; }
-  if (!reason) { showToast('請填寫進場理由', 'error'); return; }
+  // 策略標籤與進場理由皆為選填（教練建議填，但不擋單）
 
   const { size, riskAmount } = calcOrderSize(entry, sl, riskPct, state.settings.balance);
   if (size <= 0) { showToast('部位計算失敗', 'error'); return; }
@@ -4279,8 +4279,8 @@ function submitOrder() {
     takeProfit: tp,
     riskPct,
     riskAmount,
-    strategyTag: strategy,
-    entryReason: reason,
+    strategyTag: strategy || '—',
+    entryReason: reason || '—',
     status: 'open',
     createdAt: Date.now(),
     chartTime: c.time,
