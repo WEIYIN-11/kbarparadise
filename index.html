@@ -238,6 +238,69 @@ input, textarea { user-select: text; }
 .blind-reveal-sym { font-size: 22px; font-weight: 700; color: var(--gold); }
 .blind-reveal-meta { font-size: 12px; color: var(--text-2); margin-top: 4px; }
 
+/* 盲測結束 — 量化績效儀表板（交易所風格卡片） */
+.perf-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.perf-card {
+  background: rgba(30, 34, 45, 0.55);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 13px 15px;
+}
+.perf-card .pl {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-bottom: 6px;
+  white-space: nowrap;
+}
+.perf-card .pv {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.perf-card .pv.up { color: #2be3a9; }
+.perf-card .pv.down { color: #ff5b6a; }
+.perf-card .ps {
+  font-size: 11px;
+  color: var(--text-3);
+  margin-top: 5px;
+}
+.perf-curve {
+  background: rgba(30, 34, 45, 0.55);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+.perf-curve .pc-title {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  color: var(--text);
+  text-transform: uppercase;
+}
+.perf-curve .pc-sub {
+  font-size: 11px;
+  color: var(--text-3);
+  margin: 3px 0 10px;
+}
+.perf-curve .pc-dates {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-3);
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
 .user-chip {
   display: flex; align-items: center; gap: 8px;
   background: var(--bg-3);
@@ -4955,6 +5018,22 @@ function finishBlindSession(endReason, opts = {}) {
   const raw = state.cache[`${b.symbol}_${b.timeframe}`] || [];
   const endIdx = Math.min(state.cursorIndex, b.endIndex);
   const p0 = raw[b.startIndex]?.close, p1 = raw[endIdx]?.close;
+  // R 序列（時間正序）→ 累積曲線 / 峰值回撤 / 獲利因子
+  const chrono = [...trades].sort((x, y) => x.exitTime - y.exitTime);
+  const rSeq = chrono.map(t => t.rMultiple || 0);
+  const rCurve = [0];
+  let cum = 0, peak = 0, maxDD = 0;
+  for (const r of rSeq) {
+    cum += r;
+    rCurve.push(+cum.toFixed(2));
+    peak = Math.max(peak, cum);
+    maxDD = Math.max(maxDD, peak - cum);
+  }
+  const winR = rSeq.filter(r => r > 0);
+  const lossR = rSeq.filter(r => r < 0);
+  const grossWinR = winR.reduce((s, r) => s + r, 0);
+  const grossLossR = Math.abs(lossR.reduce((s, r) => s + r, 0));
+  const totalPnl = trades.reduce((s, t) => s + (t.pnl || 0), 0);
   const summary = {
     id: b.id,
     symbol: b.symbol,
@@ -4969,9 +5048,17 @@ function finishBlindSession(endReason, opts = {}) {
     longWins: longs.filter(t => t.pnl > 0).length,
     shortWins: shorts.filter(t => t.pnl > 0).length,
     winRate: trades.length ? wins.length / trades.length * 100 : null,
-    totalPnl: trades.reduce((s, t) => s + (t.pnl || 0), 0),
+    totalPnl,
     avgR: trades.length ? trades.reduce((s, t) => s + (t.rMultiple || 0), 0) / trades.length : 0,
     bhPct: (p0 && p1) ? (p1 / p0 - 1) * 100 : null,   // 同期間買進持有報酬（對照基準）
+    // 量化績效卡欄位
+    perfPct: state.settings.balance ? totalPnl / state.settings.balance * 100 : null,
+    cumR: +cum.toFixed(2),
+    maxDD: +maxDD.toFixed(2),
+    profitFactor: grossLossR > 0 ? +(grossWinR / grossLossR).toFixed(2) : (grossWinR > 0 ? Infinity : null),
+    avgWinR: winR.length ? +(grossWinR / winR.length).toFixed(2) : null,
+    avgLossR: lossR.length ? +(-(grossLossR / lossR.length)).toFixed(2) : null,
+    rCurve,
   };
   if (!opts.skipHistory) state.blindHistory.unshift(summary);
   delete state.drawings[`blind_${b.id}`];   // 盲測畫線用完即丟
@@ -4984,31 +5071,73 @@ function finishBlindSession(endReason, opts = {}) {
   loadAndStart();
 }
 
+// R 權益曲線 → inline SVG（正報酬綠線、負報酬紅線、0 軸虛線）
+function rCurveSvg(curve, w = 430, h = 120) {
+  if (!Array.isArray(curve) || curve.length < 2) return '';
+  const min = Math.min(...curve, 0), max = Math.max(...curve, 0);
+  const span = (max - min) || 1;
+  const pad = 6;
+  const px = (i) => pad + i * (w - pad * 2) / (curve.length - 1);
+  const py = (v) => pad + (max - v) * (h - pad * 2) / span;
+  const pts = curve.map((v, i) => `${px(i).toFixed(1)},${py(v).toFixed(1)}`).join(' ');
+  const up = curve[curve.length - 1] >= 0;
+  const color = up ? '#2be3a9' : '#ff5b6a';
+  const zy = py(0).toFixed(1);
+  return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:auto;display:block;" preserveAspectRatio="none">
+    <line x1="${pad}" x2="${w - pad}" y1="${zy}" y2="${zy}" stroke="rgba(149,152,161,0.25)" stroke-width="1" stroke-dasharray="4 4"/>
+    <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+  </svg>`;
+}
+
 function showBlindResult(s, wasAbandoned) {
   const info = symInfo(s.symbol);
   const catLabel = CATEGORY_LABELS[info.category] || '';
-  const wrTotal = s.winRate == null ? '—' : s.winRate.toFixed(1) + '%';
-  const wrL = s.longs ? (s.longWins / s.longs * 100).toFixed(0) + '%' : '—';
-  const wrS = s.shorts ? (s.shortWins / s.shorts * 100).toFixed(0) + '%' : '—';
   const period = (s.startTime && s.endTime)
     ? `${fmtDateTime(s.startTime, '1d')} ~ ${fmtDateTime(s.endTime, '1d')}`
     : '—';
+  const n = s.trades || 0;
+  const winCount = (s.longWins ?? 0) + (s.shortWins ?? 0);
+  const lossCount = n - winCount;
+  const sign = (v) => v > 0 ? '+' : '';
+  const ud = (v) => v == null ? '' : (v >= 0 ? 'up' : 'down');
+  const num = (v, dp = 2, suffix = '') => v == null || Number.isNaN(v) ? '—'
+    : (!isFinite(v) ? '∞' : `${sign(v)}${v.toFixed(dp)}${suffix}`);
+  // 卡片：label / 值 / class / 註解
+  const cards = [
+    ['PERFORMANCE %', num(s.perfPct, 2, '%'), ud(s.perfPct), `本輪盈虧 ${fmtMoney(s.totalPnl)}`],
+    ['CUMULATIVE R', num(s.cumR, 2, 'R'), ud(s.cumR), '全部交易 R 加總'],
+    ['WIN RATE', s.winRate == null ? '—' : s.winRate.toFixed(1) + '%', (s.winRate ?? 0) >= 50 ? 'up' : 'down', `${winCount}W / ${lossCount}L`],
+    ['EXPECTANCY', num(s.avgR, 2, 'R'), ud(s.avgR), '平均每單'],
+    ['PROFIT FACTOR', s.profitFactor == null ? '—' : (isFinite(s.profitFactor) ? s.profitFactor.toFixed(2) : '∞'), (s.profitFactor ?? 0) >= 1 ? 'up' : 'down', 'Gross win R / loss R'],
+    ['MAX DD', s.maxDD == null ? '—' : '-' + s.maxDD.toFixed(2) + 'R', s.maxDD ? 'down' : '', 'R 峰值回撤'],
+    ['AVG WIN', num(s.avgWinR, 2, 'R'), 'up', 'winning trades'],
+    ['AVG LOSS', num(s.avgLossR, 2, 'R'), s.avgLossR != null ? 'down' : '', 'losing trades'],
+    ['TRADES', String(n), '', `${s.longs ?? 0} 多 / ${s.shorts ?? 0} 空`],
+    ['BUY & HOLD', num(s.bhPct, 2, '%'), ud(s.bhPct), '同期持有對照'],
+  ];
+  const curveHtml = (Array.isArray(s.rCurve) && s.rCurve.length >= 2) ? `
+    <div class="perf-curve">
+      <div class="pc-title">R Equity Curve</div>
+      <div class="pc-sub">本輪盲測 · ${n} 筆 · ${num(Math.min(...s.rCurve), 2)}R → ${num(s.cumR, 2)}R</div>
+      ${rCurveSvg(s.rCurve)}
+      <div class="pc-dates"><span>${s.startTime ? fmtDateTime(s.startTime, '1d') : ''}</span><span>${s.endTime ? fmtDateTime(s.endTime, '1d') : ''}</span></div>
+    </div>` : '';
   $('blind-result-body').innerHTML = `
     <div class="blind-reveal">
       <div class="blind-reveal-sym">🎯 ${escHtml(info.name)}</div>
       <div class="blind-reveal-meta">${escHtml(catLabel)} · ${s.timeframe === '1d' ? '日線' : '1 小時'} · ${period}（${s.barsPlayed} 根）</div>
     </div>
-    <div class="stat-grid">
-      <div class="stat-card"><div class="label">交易次數</div><div class="value">${s.trades}</div></div>
-      <div class="stat-card"><div class="label">多 / 空 次數</div><div class="value">${s.longs} / ${s.shorts}</div></div>
-      <div class="stat-card ${(s.winRate ?? 0) >= 50 ? 'win' : 'lose'}"><div class="label">勝率</div><div class="value">${wrTotal}</div></div>
-      <div class="stat-card"><div class="label">多勝率 / 空勝率</div><div class="value" style="font-size:15px;">${wrL} / ${wrS}</div></div>
-      <div class="stat-card ${s.totalPnl >= 0 ? 'win' : 'lose'}"><div class="label">總盈虧</div><div class="value">${fmtMoney(s.totalPnl)}</div></div>
-      <div class="stat-card ${s.avgR >= 0 ? 'win' : 'lose'}"><div class="label">平均 R 倍數</div><div class="value">${fmtR(s.avgR)}</div></div>
+    <div class="perf-grid">
+      ${cards.map(([label, value, cls, sub]) => `
+        <div class="perf-card">
+          <div class="pl">${label}</div>
+          <div class="pv ${cls}">${value}</div>
+          <div class="ps">${escHtml(sub)}</div>
+        </div>`).join('')}
     </div>
-    ${s.bhPct != null ? `<div class="field-hint" style="margin-top:4px;">📌 同期間買進持有：<strong style="color:${s.bhPct >= 0 ? 'var(--accent-2)' : 'var(--danger-2)'}">${fmtPct(s.bhPct)}</strong>（對照基準）</div>` : ''}
-    ${s.trades === 0 ? '<div class="field-hint" style="margin-top:6px;">這輪沒有下單——觀察也是練習，下輪試著找一個進場點。</div>' : ''}
-    ${wasAbandoned ? '<div class="field-hint" style="margin-top:6px;">此輪未計入盲測紀錄。</div>' : ''}
+    ${curveHtml}
+    ${n === 0 ? '<div class="field-hint" style="margin-top:10px;">這輪沒有下單——觀察也是練習，下輪試著找一個進場點。</div>' : ''}
+    ${wasAbandoned ? '<div class="field-hint" style="margin-top:10px;">此輪未計入盲測紀錄。</div>' : ''}
   `;
   $('blind-result-modal').classList.add('show');
 }

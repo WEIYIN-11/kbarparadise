@@ -1,6 +1,13 @@
 {
   "hosting": {
     "public": ".",
+    "redirects": [
+      {
+        "source": "**",
+        "destination": "https://sim.ark-blueprint.com",
+        "type": 301
+      }
+    ],
     "ignore": [
       "firebase.json",
       "firestore.rules",
