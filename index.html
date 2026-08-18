@@ -337,6 +337,7 @@ input, textarea { user-select: text; }
   flex: 1;
   display: flex;
   min-width: 0;
+  min-height: 0;   /* 手機直向（.main 轉 column）時，沒有這行畫線工具列會把下單面板頂出畫面 */
   background: var(--bg);
 }
 .chart-col {
@@ -2118,9 +2119,12 @@ function lineDashFor(ls) {
     default: return [];          // solid
   }
 }
+// 盲測時用獨立 key：舊畫線不會洩露標的、正規化座標也不污染原標的
+function drawingsKey() {
+  return state.blind ? `blind_${state.blind.id}` : `${state.symbol}_${state.timeframe}`;
+}
 function getCurrentDrawings() {
-  // 盲測時用獨立 key：舊畫線不會洩露標的、正規化座標也不污染原標的
-  const key = state.blind ? `blind_${state.blind.id}` : `${state.symbol}_${state.timeframe}`;
+  const key = drawingsKey();
   if (!state.drawings[key]) state.drawings[key] = [];
   return state.drawings[key];
 }
@@ -2870,6 +2874,20 @@ function resizeDrawCanvas() {
 function timeToX(time) {
   const x = chart.timeScale().timeToCoordinate(time);
   return x == null ? null : x;
+}
+// 時間 → 最接近的 K 棒索引（繪圖平移用：日線有週末假日缺口，
+// 直接對時間戳加減會落在沒有 K 棒的時間，圖形就會變成畫不出也點不到的幽靈）
+function timeToIndex(time) {
+  const arr = state.candles;
+  if (!arr.length) return -1;
+  let lo = 0, hi = arr.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (arr[mid].time < time) lo = mid + 1;
+    else hi = mid;
+  }
+  if (lo > 0 && Math.abs(arr[lo - 1].time - time) <= Math.abs(arr[lo].time - time)) return lo - 1;
+  return lo;
 }
 function priceToY(price) {
   return candleSeries.priceToCoordinate(price);
@@ -3729,8 +3747,10 @@ function undoLastDrawing() {
 function clearAllDrawings() {
   const arr = getCurrentDrawings();
   if (!arr.length) return;
-  if (!confirm(`清除所有畫線（${state.symbol} ${state.timeframe} 共 ${arr.length} 筆）？`)) return;
-  state.drawings[`${state.symbol}_${state.timeframe}`] = [];
+  // 用 symLabel（盲測中顯示「❓ 盲測標的」）＋清 getCurrentDrawings 的同一把 key，
+  // 否則盲測時會在確認視窗印出答案，而且清掉的是該標的平時的畫線
+  if (!confirm(`清除所有畫線（${symLabel(state.symbol)} ${state.timeframe} 共 ${arr.length} 筆）？`)) return;
+  state.drawings[drawingsKey()] = [];
   saveStorage();
   redrawDrawings();
   showToast('已清除', 'success');
@@ -3840,7 +3860,9 @@ function onDragMove(e) {
   let newPrice = candleSeries.coordinateToPrice(y);
   if (newPrice == null) return;
   const p = state.positions.find(x => x.id === dragState.posId);
-  if (!p) return;
+  // 標的守衛：拖曳途中若切換了標的/週期，這裡的價格屬於「新標的」，
+  // 寫進舊部位會產生天文數字的假損益——直接中止本次拖曳
+  if (!p || p.symbol !== state.symbol || p.timeframe !== state.timeframe) { cancelLineDrag(); return; }
   // Clamp: SL/TP must stay on the correct side of the CURRENT price
   // (otherwise the order would already be triggered).
   // SL above current = already stopped out (long); TP below current = already filled (long).
@@ -3907,9 +3929,30 @@ function onDragMove(e) {
   updateHotStats();
 }
 
+// 手勢被系統中斷（touchcancel）：還原到拖曳前的狀態，不套用任何變更
+function cancelLineDrag() {
+  if (!dragState) return;
+  const p = state.positions.find(x => x.id === dragState.posId);
+  if (dragState.tempLine) { try { candleSeries.removePriceLine(dragState.tempLine); } catch {} }
+  if (p) {
+    if (dragState.type === 'pentry') p.entryPrice = dragState.originalPrice;
+    p.stopLoss = dragState.origSl ?? p.stopLoss;
+    p.takeProfit = dragState.origTp ?? p.takeProfit;
+    redrawPositionLines();
+    renderPositions();
+    updateHotStats();
+  }
+  document.body.style.cursor = '';
+  document.removeEventListener('mousemove', onDragMove);
+  document.removeEventListener('mouseup', onDragEnd);
+  dragState = null;
+}
+
 function onDragEnd() {
   if (!dragState) return;
   const p = state.positions.find(x => x.id === dragState.posId);
+  // 同 onDragMove 的標的守衛：切換標的後放開滑鼠不得套用
+  if (p && (p.symbol !== state.symbol || p.timeframe !== state.timeframe)) { cancelLineDrag(); return; }
   // 成本線拖曳設定：移除預覽虛線，把放開的價位寫進停損或停利
   if (dragState.type === 'entryset') {
     if (dragState.tempLine) { try { candleSeries.removePriceLine(dragState.tempLine); } catch {} }
@@ -4017,6 +4060,8 @@ function initDragSLTP() {
           : slTpHit.type === 'pentry' ? lines.entry : null,
         originalPrice: slTpHit.type === 'sl' ? slTpHit.pos.stopLoss
           : slTpHit.type === 'tp' ? slTpHit.pos.takeProfit : slTpHit.pos.entryPrice,
+        origSl: slTpHit.pos.stopLoss,
+        origTp: slTpHit.pos.takeProfit,
       };
       // 成本線拖曳設定：用一條暫時虛線跟著游標，放開才真正設定停損/停利
       if (slTpHit.type === 'entryset') {
@@ -4072,14 +4117,41 @@ function initDragSLTP() {
 
   // Touch support：SL/TP/掛單線拖曳 + 繪圖選取/整體移動/錨點拖曳
   // （點位「放置」走 lightweight-charts 的 tap→subscribeClick，本來就支援觸控）
+  // capture 階段攔截：否則 lightweight-charts 的 canvas handler 會先啟動平移手勢，
+  // 造成「拖線的同時圖表也跟著滑」（滑鼠路徑用的是同樣的 capture + stopPropagation）
   chartEl.addEventListener('touchstart', (e) => {
-    if (state.tool || dragState || state.drawingDrag || e.touches.length !== 1) return;
+    if (state.tool || dragState || state.drawingDrag || posToolDrag || e.touches.length !== 1) return;
     const rect = chartEl.getBoundingClientRect();
     const y = e.touches[0].clientY - rect.top;
     const x = e.touches[0].clientX - rect.left;
+
+    // 0) 圖表下單部位工具線（與滑鼠路徑同順序）
+    if (state.posTool) {
+      const ptHit = posToolHitAtY(y);
+      if (ptHit) {
+        e.preventDefault(); e.stopPropagation();
+        posToolDrag = ptHit;
+        const ptMove = (ev) => {
+          if (ev.touches.length !== 1) return;
+          ev.preventDefault();
+          onPosToolDragMove({ clientY: ev.touches[0].clientY });
+        };
+        const ptEnd = () => {
+          onPosToolDragEnd();
+          document.removeEventListener('touchmove', ptMove);
+          document.removeEventListener('touchend', ptEnd);
+          document.removeEventListener('touchcancel', ptEnd);
+        };
+        document.addEventListener('touchmove', ptMove, { passive: false });
+        document.addEventListener('touchend', ptEnd);
+        document.addEventListener('touchcancel', ptEnd);
+        return;
+      }
+    }
+
     const hit = findDraggableLineAtY(y);
     if (hit) {
-      e.preventDefault();
+      e.preventDefault(); e.stopPropagation();
       const lines = posLineMap.get(hit.pos.id);
       if (!lines) return;
       dragState = {
@@ -4090,6 +4162,8 @@ function initDragSLTP() {
         originalPrice: hit.type === 'sl' ? hit.pos.stopLoss
           : hit.type === 'tp' ? hit.pos.takeProfit : hit.pos.entryPrice,
       };
+      dragState.origSl = hit.pos.stopLoss;
+      dragState.origTp = hit.pos.takeProfit;
       if (hit.type === 'entryset') {
         dragState.tempLine = candleSeries.createPriceLine({
           price: hit.pos.entryPrice,
@@ -4102,19 +4176,23 @@ function initDragSLTP() {
         ev.preventDefault();
         onDragMove({ clientY: ev.touches[0].clientY });
       };
-      const touchEnd = () => {
-        onDragEnd();
+      const unbind = () => {
         document.removeEventListener('touchmove', touchMove);
         document.removeEventListener('touchend', touchEnd);
+        document.removeEventListener('touchcancel', touchCancel);
       };
+      const touchEnd = () => { onDragEnd(); unbind(); };
+      // 來電／通知列／邊緣返回手勢會送 touchcancel：視為放棄本次調整並還原，不可當成確認
+      const touchCancel = () => { cancelLineDrag(); unbind(); };
       document.addEventListener('touchmove', touchMove, { passive: false });
       document.addEventListener('touchend', touchEnd);
+      document.addEventListener('touchcancel', touchCancel);
       return;
     }
     // 繪圖：碰到就選取（浮出刪除列），並可直接拖曳（錨點細調 / 整體平移）
     const dHit = hitTestAllDrawings(x, y);
     if (dHit) {
-      e.preventDefault();
+      e.preventDefault(); e.stopPropagation();
       selectDrawing(dHit.drawing.id);
       const startTime = chart.timeScale().coordinateToTime(x);
       const startPrice = candleSeries.coordinateToPrice(y);
@@ -4131,13 +4209,26 @@ function initDragSLTP() {
         ev.preventDefault();
         onDrawingDragMove({ clientX: ev.touches[0].clientX, clientY: ev.touches[0].clientY });
       };
-      const dEnd = () => {
-        onDrawingDragEnd();
+      const dUnbind = () => {
         document.removeEventListener('touchmove', dMove);
         document.removeEventListener('touchend', dEnd);
+        document.removeEventListener('touchcancel', dCancel);
+      };
+      const dEnd = () => { onDrawingDragEnd(); dUnbind(); };
+      // 中斷時把圖形還原成拖曳前的座標
+      const dCancel = () => {
+        const dd = state.drawingDrag;
+        if (dd) {
+          const dr = getCurrentDrawings().find(x => x.id === dd.drawingId);
+          if (dr && dd.snapshot) dr.points = JSON.parse(JSON.stringify(dd.snapshot));
+        }
+        onDrawingDragEnd();
+        redrawDrawings();
+        dUnbind();
       };
       document.addEventListener('touchmove', dMove, { passive: false });
       document.addEventListener('touchend', dEnd);
+      document.addEventListener('touchcancel', dCancel);
       return;
     }
     // 空白處輕點：取消選取（與桌面行為一致）
@@ -4149,10 +4240,12 @@ function initDragSLTP() {
           selectDrawing(null);
         }
         document.removeEventListener('touchend', onTouchUp);
+        document.removeEventListener('touchcancel', onTouchUp);
       };
       document.addEventListener('touchend', onTouchUp);
+      document.addEventListener('touchcancel', onTouchUp);
     }
-  }, { passive: false });
+  }, { passive: false, capture: true });
 }
 
 // ---- Drawing selection / drag ----
@@ -4194,13 +4287,18 @@ function onDrawingDragMove(e) {
       d.points[idx] = { time: newTime, price: newPrice };
     }
   } else {
-    // 'move': translate all points by delta in chart units
-    const deltaTime = (newTime - dd.startTime) || 0;
+    // 'move': 以「K 棒索引」平移（不是時間戳相加），落點才保證是真實 K 棒
+    const deltaIdx = timeToIndex(newTime) - timeToIndex(dd.startTime);
+    const maxIdx = Math.min(state.cursorIndex >= 0 ? state.cursorIndex : state.candles.length - 1, state.candles.length - 1);
+    const shiftTime = (t) => {
+      const ni = Math.max(0, Math.min(maxIdx, timeToIndex(t) + deltaIdx));
+      return state.candles[ni] ? state.candles[ni].time : t;
+    };
     const deltaPrice = newPrice - dd.startPrice;
     for (let i = 0; i < d.points.length; i++) {
       const orig = dd.snapshot[i];
       d.points[i] = {
-        time: orig.time + deltaTime,
+        time: shiftTime(orig.time),
         price: orig.price + deltaPrice,
       };
     }
@@ -4277,6 +4375,8 @@ function syncTopbarUI() {
 async function loadAndStart() {
   stopPlay();
   if (typeof clearReviewLines === 'function') clearReviewLines();   // 換場景時移除檢討線
+  if (dragState) cancelLineDrag();          // 進行中的線拖曳不可跨到新標的
+  if (state.drawingDrag) onDrawingDragEnd();
   // Reset in-progress drawing when switching context
   resetPendingPoints();
   state.posTool = null;
@@ -4337,6 +4437,8 @@ function advanceBar(n = 1) {
   refreshOrderForm();
   renderPositions();
   updateHotStats();
+  // 盲測進度每 10 根落地一次（原本只靠 beforeunload，瀏覽器崩潰或手機被回收就會退回舊位置）
+  if (state.blind && state.cursorIndex % 10 === 0) saveStorage();
   if (blindDone) {
     stopPlay();
     finishBlindSession('跑完設定長度');
@@ -4431,6 +4533,11 @@ function checkPositionTriggers(newBar) {
     if (exitPrice != null) {
       closePosition(p, exitPrice, exitReason, newBar.time, '系統觸發 SL/TP');
       changed = true;
+      // 若平倉視窗正對著這個部位，關掉它（否則會留下一個按了沒反應的死視窗）
+      if (_closeTargetId === p.id) {
+        $('close-modal').classList.remove('show');
+        _closeTargetId = null;
+      }
     }
   }
   if (changed) {
@@ -4523,9 +4630,14 @@ function updateOrderSummary() {
   summary.innerHTML = rows.join('');
 }
 
+let _submitLock = 0;
 function submitOrder() {
   const c = state.candles[state.cursorIndex];
   if (!c) { showToast('請先載入資料', 'error'); return; }
+  // 手指/滑鼠連點兩下會送出兩張一模一樣的單，風險直接翻倍
+  const now = Date.now();
+  if (now - _submitLock < 400) return;
+  _submitLock = now;
   const entry = +$('order-entry').value;
   const sl = +$('order-sl').value || null;
   const tp = +$('order-tp').value || null;
@@ -4620,7 +4732,9 @@ function renderPositions() {
           </div>
           ${pending
             ? '<div class="pos-pnl" style="color:var(--text-3);">⏳ 掛單中</div>'
-            : `<div class="pos-pnl ${pnlClass}">${fmtMoney(pnl)} <span style="font-size:10px;">${fmtR(rMul)}</span></div>`}
+            : !isCurrent
+              ? '<div class="pos-pnl" style="color:var(--text-3);">—</div>'
+              : `<div class="pos-pnl ${pnlClass}">${fmtMoney(pnl)} <span style="font-size:10px;">${fmtR(rMul)}</span></div>`}
         </div>
         <div class="pos-row"><span>${pending ? '掛單價' : '進場'}</span><span class="v">${fmtPrice(p.entryPrice)} · ${isMasked(p) ? '❓' : fmtDateTime(p.entryTime, p.timeframe)}</span></div>
         <div class="pos-row"><span>停損</span><span class="v">${p.stopLoss != null
@@ -4677,7 +4791,9 @@ function addPosStop(posId, type) {
   const dir = p.side === 'long' ? 1 : -1;
   let price;
   if (type === 'sl') {
-    price = c.close - dir * c.close * 0.01;
+    // 與停利對稱：取現價與進場價中較不利的一側再外推，避免「達停損」卻是獲利出場
+    const base = p.side === 'long' ? Math.min(c.close, p.entryPrice) : Math.max(c.close, p.entryPrice);
+    price = base - dir * base * 0.01;
   } else {
     // 停利以「現價與進場價較有利一側」再外推 1%：虧損中補停利不會落在進場價錯邊
     // （否則出場會被標成「達停利」但實際是虧損，污染統計）
@@ -4756,8 +4872,14 @@ function closePartialPosition(p, frac, exitPrice, exitReason, exitTime, exitNote
 }
 function confirmManualClose() {
   const p = state.positions.find(x => x.id === _closeTargetId);
-  if (!p) return;
   const c = state.candles[state.cursorIndex];
+  // 部位可能在視窗開著時已被停損/停利平掉——關窗並說明，不要靜默無反應
+  if (!p || p.status !== 'open') {
+    $('close-modal').classList.remove('show');
+    _closeTargetId = null;
+    showToast('這個部位已經不在了（可能已觸價出場）', 'error');
+    return;
+  }
   if (!c) return;
   const reason = $('close-reason').value;
   const note = $('close-note').value.trim();
@@ -5042,10 +5164,57 @@ function renderReport() {
     </div>
     ${crosstabHTML}
     ${renderBlindHistoryHTML()}
-    <div class="field-hint" style="margin-top:10px;">
-      💡 給教練看的觀察重點：策略「<strong>突破</strong>」對應「<strong>提前砍單停損</strong>」次數多，代表進場後沒紀律抱單；策略「<strong>突破</strong>」對應「<strong>達停利</strong>」少，代表停利設太遠。
-    </div>
+    ${buildInsightHTML(trades)}
   `;
+}
+
+// 依實際交易資料生成觀察（原本是寫死的範例文字，會給出與事實相反的診斷）
+function buildInsightHTML(trades) {
+  if (trades.length < 5) {
+    return '<div class="field-hint" style="margin-top:10px;">💡 累積 5 筆以上交易後，這裡會依你的實際紀錄整理觀察重點。</div>';
+  }
+  const notes = [];
+  const count = (fn) => trades.filter(fn).length;
+  const wins = trades.filter(t => t.pnl > 0), losses = trades.filter(t => t.pnl <= 0);
+  // 1) 拗單檢查：平均虧損持有時間 vs 平均獲利持有時間
+  const holdBars = (t) => (t.exitTime != null && t.entryTime != null && t.exitTime > t.entryTime)
+    ? (t.exitTime - t.entryTime) : 0;
+  const avgHold = (arr) => arr.length ? arr.reduce((s, t) => s + holdBars(t), 0) / arr.length : 0;
+  const hw = avgHold(wins), hl = avgHold(losses);
+  if (hw > 0 && hl > hw * 1.3) {
+    notes.push('虧損單的平均持有時間比獲利單長，是典型的「賠錢拗、賺錢跑」——檢查是不是捨不得認賠。');
+  } else if (hw > 0 && hw > hl * 1.3) {
+    notes.push('獲利單抱得比虧損單久，抱單紀律良好，繼續保持。');
+  }
+  // 2) 提前出場 vs 讓停損停利執行
+  const early = count(t => /提前|不耐|扛單/.test(t.exitReason || ''));
+  if (early / trades.length > 0.5) {
+    notes.push(`${Math.round(early / trades.length * 100)}% 的交易是提前手動出場，代表進場後常改變主意——回頭看這些單，如果不動會更好還是更糟？`);
+  }
+  // 3) 停利距離：達停損多但達停利少
+  const hitSl = count(t => t.exitReason === '達停損'), hitTp = count(t => t.exitReason === '達停利');
+  if (hitSl >= 3 && hitTp === 0) {
+    notes.push('停損被打到多次、停利一次都沒到，停利可能設得太遠，或進場點常在反轉前。');
+  }
+  // 4) 最高頻的策略 × 出場原因組合
+  const combo = {};
+  for (const t of trades) {
+    const k = `${t.strategyTag || '—'}｜${t.exitReason || '—'}`;
+    combo[k] = (combo[k] || 0) + 1;
+  }
+  const top = Object.entries(combo).sort((a, b) => b[1] - a[1])[0];
+  if (top && top[1] >= 3 && !top[0].startsWith('—')) {
+    const [tag, reason] = top[0].split('｜');
+    notes.push(`最常出現的組合是策略「<strong>${escHtml(tag)}</strong>」→「<strong>${escHtml(reason)}</strong>」（${top[1]} 次），值得和教練一起看這組的決策過程。`);
+  }
+  // 5) 風險一致性
+  const pcts = [...new Set(trades.map(t => Math.round((t.riskPct || 0) * 100) / 100))];
+  if (pcts.length > 3) {
+    notes.push(`每筆風險 % 用了 ${pcts.length} 種不同設定，部位大小不一致會讓勝率與期望值失真——固定風險比例是統計有效的前提。`);
+  }
+  if (!notes.length) notes.push('目前沒有明顯的行為偏誤訊號，繼續累積樣本數。');
+  return `<div class="field-hint" style="margin-top:10px;">💡 依你這 ${trades.length} 筆紀錄整理的觀察：<br>`
+    + notes.map(n => `· ${n}`).join('<br>') + '</div>';
 }
 
 // ---------- Hot stats ----------
@@ -5322,8 +5491,11 @@ function saveSettingsAction() {
 }
 function exportJson() {
   // 盲測進行中：匯出檔要遮掉本輪的標的與日期，否則等於直接看答案
+  // 盲測進行中的紀錄：除了標的與時間，pv（點值快照）也要遮——
+  // pv = 原始點值 ÷ scale，洩漏它等於洩漏正規化倍率，可直接反推真實價位
   const mask = (x) => (state.blind && x.blindId === state.blind.id)
-    ? { ...x, symbol: '❓盲測進行中', entryTime: null, exitTime: null, chartTime: null }
+    ? { ...x, symbol: '❓盲測進行中', entryTime: null, exitTime: null, chartTime: null,
+        createdBarTime: null, pv: null }
     : x;
   const payload = {
     exportedAt: new Date().toISOString(),
@@ -5555,7 +5727,9 @@ function finishBlindSession(endReason, opts = {}) {
     perfPct: state.settings.balance ? totalPnl / state.settings.balance * 100 : null,
     cumR: +cum.toFixed(2),
     maxDD: +maxDD.toFixed(2),
-    profitFactor: grossLossR > 0 ? +(grossWinR / grossLossR).toFixed(2) : (grossWinR > 0 ? Infinity : null),
+    // Infinity 經 JSON.stringify 會變 null，重整後 ∞ 會掉成「—」：改用旗標保存
+    profitFactor: grossLossR > 0 ? +(grossWinR / grossLossR).toFixed(2) : null,
+    profitFactorInf: grossLossR === 0 && grossWinR > 0,
     avgWinR: winR.length ? +(grossWinR / winR.length).toFixed(2) : null,
     avgLossR: lossR.length ? +(-(grossLossR / lossR.length)).toFixed(2) : null,
     rCurve,
@@ -5608,7 +5782,9 @@ function showBlindResult(s, wasAbandoned) {
     ['CUMULATIVE R', num(s.cumR, 2, 'R'), ud(s.cumR), '全部交易 R 加總'],
     ['WIN RATE', s.winRate == null ? '—' : s.winRate.toFixed(1) + '%', (s.winRate ?? 0) >= 50 ? 'up' : 'down', `${winCount}W / ${lossCount}L`],
     ['EXPECTANCY', num(s.avgR, 2, 'R'), ud(s.avgR), '平均每單'],
-    ['PROFIT FACTOR', s.profitFactor == null ? '—' : (isFinite(s.profitFactor) ? s.profitFactor.toFixed(2) : '∞'), (s.profitFactor ?? 0) >= 1 ? 'up' : 'down', 'Gross win R / loss R'],
+    ['PROFIT FACTOR', s.profitFactorInf || s.profitFactor === Infinity ? '∞'
+      : (s.profitFactor == null ? '—' : s.profitFactor.toFixed(2)),
+      (s.profitFactorInf || (s.profitFactor ?? 0) >= 1) ? 'up' : 'down', 'Gross win R / loss R'],
     ['MAX DD', s.maxDD == null ? '—' : '-' + s.maxDD.toFixed(2) + 'R', s.maxDD ? 'down' : '', 'R 峰值回撤'],
     ['AVG WIN', num(s.avgWinR, 2, 'R'), 'up', 'winning trades'],
     ['AVG LOSS', num(s.avgLossR, 2, 'R'), s.avgLossR != null ? 'down' : '', 'losing trades'],
