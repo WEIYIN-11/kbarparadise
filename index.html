@@ -4395,6 +4395,10 @@ function checkPositionTriggers(newBar) {
   let changed = false;
   for (const p of state.positions) {
     if (p.symbol !== state.symbol || p.timeframe !== state.timeframe || !inScope(p)) continue;
+    // 時間守衛：回放檢討或倒退 K 棒時，游標會回到部位建立之前——
+    // 那些「過去」的 K 棒不該觸發成交或停損停利（否則出場時間會早於進場時間）
+    const refTime = p.status === 'pending' ? (p.createdBarTime ?? p.entryTime) : p.entryTime;
+    if (refTime != null && newBar.time < refTime) continue;
     // 掛單：價格觸及進場價才成交；成交當根不檢查停損/停利（下一根才開始）
     if (p.status === 'pending') {
       if (newBar.low <= p.entryPrice && p.entryPrice <= newBar.high) {
@@ -4557,6 +4561,7 @@ function submitOrder() {
     entryReason: reason || '—',
     status: filled ? 'open' : 'pending',
     createdAt: Date.now(),
+    createdBarTime: c.time,                   // 下單當根：掛單成交判定的時間下限（回放倒退時不誤成交）
     chartTime: c.time,
     pv: getPointValue(state.symbol),          // 點值快照（盲測正規化後仍算出正確金額）
     blindId: state.blind ? state.blind.id : null,
@@ -4709,7 +4714,7 @@ function updateCloseInfo() {
 }
 function openCloseModal(posId) {
   const p = state.positions.find(x => x.id === posId);
-  if (!p) return;
+  if (!p || p.status !== 'open') return;   // 未成交掛單只能取消，不能平倉
   _closeTargetId = posId;
   const c = state.candles[state.cursorIndex];
   if (!c) return;
@@ -4726,14 +4731,17 @@ function openCloseModal(posId) {
 function closePartialPosition(p, frac, exitPrice, exitReason, exitTime, exitNote) {
   const part = p.size * frac;
   const partRisk = p.riskAmount * frac;
+  const partPct = p.riskPct * frac;
   const dir = p.side === 'long' ? 1 : -1;
   const pnlPts = (exitPrice - p.entryPrice) * dir;
   const pnl = pnlPts * posPV(p) * part;
   const rec = {
     ...p,
     id: uid(),
+    parentId: p.id,                 // 同源標記：同一原始部位的分筆不重複計入連敗
     size: part,
     riskAmount: partRisk,
+    riskPct: +partPct.toFixed(4),   // 風險 % 同步按比例縮放（否則明細金額與 % 互相矛盾）
     status: 'closed',
     exitPrice, exitReason, exitTime,
     exitNote: `${exitNote ? exitNote + ' ' : ''}（部分平倉 ${Math.round(frac * 100)}%）`,
@@ -4743,6 +4751,7 @@ function closePartialPosition(p, frac, exitPrice, exitReason, exitTime, exitNote
   state.trades.unshift(rec);
   p.size -= part;
   p.riskAmount -= partRisk;
+  p.riskPct = +(p.riskPct - partPct).toFixed(4);
   saveStorage();
 }
 function confirmManualClose() {
@@ -4788,24 +4797,29 @@ function closePosition(p, exitPrice, exitReason, exitTime, exitNote) {
 
 // ---------- 連敗熔斷 ----------
 // 目前 scope（盲測輪內 / 自由模式）最近的連續虧損筆數
-let _fuseNotified = 0;
+// 已通知過的連敗數，依 scope 分開記（盲測輪與自由模式各自獨立，不互相汙染）
+let _fuseNotified = {};
+function fuseScopeKey() { return state.blind ? state.blind.id : 'free'; }
 function currentLossStreak() {
   const list = state.blind
     ? state.trades.filter(t => t.blindId === state.blind.id)
     : state.trades.filter(t => !t.blindId);
-  let n = 0;
+  // 同一原始部位的分批出場算「一筆」——分三段停損不該被當成連虧三次
+  let n = 0, lastGroup = null;
   for (const t of list) {                 // unshift 存入 → index 0 = 最新
-    if ((t.pnl || 0) < 0) n++;
-    else break;
+    if ((t.pnl || 0) >= 0) break;
+    const g = t.parentId || t.id;
+    if (g !== lastGroup) { n++; lastGroup = g; }
   }
   return n;
 }
 // 連虧 3/5/7 筆時暫停回放並跳提醒；贏一筆歸零
 function checkLossStreak() {
   const n = currentLossStreak();
-  if (n < 3) { _fuseNotified = 0; return; }
-  if ((n === 3 || n === 5 || n === 7) && _fuseNotified !== n) {
-    _fuseNotified = n;
+  const key = fuseScopeKey();
+  if (n < 3) { delete _fuseNotified[key]; return; }
+  if ((n === 3 || n === 5 || n === 7) && _fuseNotified[key] !== n) {
+    _fuseNotified[key] = n;
     stopPlay();
     $('fuse-body').innerHTML =
       `你已經<strong style="color:var(--danger-2);">連續虧損 ${n} 筆</strong>——先停一下。`;
@@ -4912,6 +4926,8 @@ async function replayTrade(tradeId) {
   if (idx < 0) { showToast('找不到該筆交易對應的 K 棒', 'error'); return; }
   stopPlay();
   state.cursorIndex = state.blind ? Math.min(idx, state.blind.endIndex) : idx;
+  if (state.blind) state.blind.cursorIndex = state.cursorIndex;   // 續玩/重整才不會跳回原位
+  saveStorage();
   renderChart();
   updateReplayInfo();
   refreshOrderForm();
@@ -4975,12 +4991,16 @@ function renderReport() {
   const avgR = trades.reduce((s, t) => s + (t.rMultiple || 0), 0) / trades.length;
 
   // Max consecutive losses
-  let maxLossStreak = 0, curStreak = 0;
+  let maxLossStreak = 0, curStreak = 0, streakGroup = null;
   // trades are unshifted so newest first; compute over chronological order
+  // 同一原始部位的分批出場算一筆（與連敗熔斷的計數口徑一致）
   const chrono = [...trades].sort((a, b) => a.exitTime - b.exitTime);
   for (const t of chrono) {
-    if (t.pnl <= 0) { curStreak++; maxLossStreak = Math.max(maxLossStreak, curStreak); }
-    else { curStreak = 0; }
+    if (t.pnl <= 0) {
+      const g = t.parentId || t.id;
+      if (g !== streakGroup) { curStreak++; streakGroup = g; }
+      maxLossStreak = Math.max(maxLossStreak, curStreak);
+    } else { curStreak = 0; streakGroup = null; }
   }
 
   // strategy x exitReason crosstab
