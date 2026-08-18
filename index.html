@@ -358,6 +358,15 @@ input, textarea { user-select: text; }
 #draw-canvas.active { cursor: crosshair; }
 
 /* Drawing toolbar */
+.close-frac-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.close-frac-row button {
+  background: var(--bg-3); color: var(--text-2);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 7px 0; font-size: 12px; cursor: pointer;
+}
+.close-frac-row button.active {
+  background: var(--accent); color: #fff; border-color: var(--accent);
+}
 #draw-selected-bar {
   position: absolute;
   top: 10px; left: 50%; transform: translateX(-50%);
@@ -1630,6 +1639,15 @@ input, textarea { user-select: text; }
     <div class="modal-body">
       <div id="close-info" style="font-size:13px; color:var(--text-2); margin-bottom:14px;"></div>
       <div class="field">
+        <label>平倉比例（分批出場練習：先出一部分、剩下的續抱）</label>
+        <div class="close-frac-row" id="close-frac-row">
+          <button data-frac="0.25">25%</button>
+          <button data-frac="0.5">50%</button>
+          <button data-frac="0.75">75%</button>
+          <button data-frac="1" class="active">100%</button>
+        </div>
+      </div>
+      <div class="field">
         <label>出場原因</label>
         <select id="close-reason">
           <option value="達停利">達停利</option>
@@ -1657,6 +1675,28 @@ input, textarea { user-select: text; }
 <!-- ==========================
      MODAL: 交易詳情
 ========================== -->
+<!-- ==========================
+     MODAL: 連敗熔斷提醒
+========================== -->
+<div class="modal-bg" id="fuse-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>⚠️ 連續虧損提醒</h3>
+      <button class="modal-close" data-close="fuse-modal">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="fuse-body" style="font-size:14px;line-height:1.8;color:var(--text);"></div>
+      <div class="field-hint" style="margin-top:12px;">
+        連敗時最常見的錯誤：急著把虧損凹回來、放大部位、縮短思考時間。<br>
+        先回答自己：這幾筆是「市場環境變了」還是「我亂了節奏」？想清楚再按繼續。
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" data-close="fuse-modal">我想清楚了，繼續</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-bg" id="trade-modal">
   <div class="modal">
     <div class="modal-header">
@@ -1666,6 +1706,7 @@ input, textarea { user-select: text; }
     <div class="modal-body" id="trade-modal-body"></div>
     <div class="modal-footer">
       <button class="btn-danger" id="btn-delete-trade">刪除</button>
+      <button class="btn-secondary" id="btn-replay-trade">📍 回放這筆</button>
       <button class="btn-secondary" data-close="trade-modal">關閉</button>
     </div>
   </div>
@@ -4029,35 +4070,88 @@ function initDragSLTP() {
     }
   }, true);
 
-  // Touch support (SL/TP only - drawings on touch require longer logic; can be added later)
+  // Touch support：SL/TP/掛單線拖曳 + 繪圖選取/整體移動/錨點拖曳
+  // （點位「放置」走 lightweight-charts 的 tap→subscribeClick，本來就支援觸控）
   chartEl.addEventListener('touchstart', (e) => {
     if (state.tool || dragState || state.drawingDrag || e.touches.length !== 1) return;
     const rect = chartEl.getBoundingClientRect();
     const y = e.touches[0].clientY - rect.top;
+    const x = e.touches[0].clientX - rect.left;
     const hit = findDraggableLineAtY(y);
-    if (!hit) return;
-    e.preventDefault();
-    const lines = posLineMap.get(hit.pos.id);
-    if (!lines) return;
-    dragState = {
-      posId: hit.pos.id,
-      type: hit.type,
-      priceLine: hit.type === 'sl' ? lines.sl : hit.type === 'tp' ? lines.tp
-        : hit.type === 'pentry' ? lines.entry : null,
-      originalPrice: hit.type === 'sl' ? hit.pos.stopLoss
-        : hit.type === 'tp' ? hit.pos.takeProfit : hit.pos.entryPrice,
-    };
-    const touchMove = (ev) => {
-      if (ev.touches.length !== 1) return;
-      onDragMove({ clientY: ev.touches[0].clientY });
-    };
-    const touchEnd = () => {
-      onDragEnd();
-      document.removeEventListener('touchmove', touchMove);
-      document.removeEventListener('touchend', touchEnd);
-    };
-    document.addEventListener('touchmove', touchMove, { passive: false });
-    document.addEventListener('touchend', touchEnd);
+    if (hit) {
+      e.preventDefault();
+      const lines = posLineMap.get(hit.pos.id);
+      if (!lines) return;
+      dragState = {
+        posId: hit.pos.id,
+        type: hit.type,
+        priceLine: hit.type === 'sl' ? lines.sl : hit.type === 'tp' ? lines.tp
+          : hit.type === 'pentry' ? lines.entry : null,
+        originalPrice: hit.type === 'sl' ? hit.pos.stopLoss
+          : hit.type === 'tp' ? hit.pos.takeProfit : hit.pos.entryPrice,
+      };
+      if (hit.type === 'entryset') {
+        dragState.tempLine = candleSeries.createPriceLine({
+          price: hit.pos.entryPrice,
+          color: '#b2b5be', lineWidth: 1, lineStyle: 3,
+          title: '↕ 往上設停利 / 往下設停損',
+        });
+      }
+      const touchMove = (ev) => {
+        if (ev.touches.length !== 1) return;
+        ev.preventDefault();
+        onDragMove({ clientY: ev.touches[0].clientY });
+      };
+      const touchEnd = () => {
+        onDragEnd();
+        document.removeEventListener('touchmove', touchMove);
+        document.removeEventListener('touchend', touchEnd);
+      };
+      document.addEventListener('touchmove', touchMove, { passive: false });
+      document.addEventListener('touchend', touchEnd);
+      return;
+    }
+    // 繪圖：碰到就選取（浮出刪除列），並可直接拖曳（錨點細調 / 整體平移）
+    const dHit = hitTestAllDrawings(x, y);
+    if (dHit) {
+      e.preventDefault();
+      selectDrawing(dHit.drawing.id);
+      const startTime = chart.timeScale().coordinateToTime(x);
+      const startPrice = candleSeries.coordinateToPrice(y);
+      state.drawingDrag = {
+        drawingId: dHit.drawing.id,
+        mode: dHit.mode,
+        anchorIdx: dHit.idx,
+        startX: x, startY: y,
+        startTime, startPrice,
+        snapshot: JSON.parse(JSON.stringify(dHit.drawing.points)),
+      };
+      const dMove = (ev) => {
+        if (ev.touches.length !== 1) return;
+        ev.preventDefault();
+        onDrawingDragMove({ clientX: ev.touches[0].clientX, clientY: ev.touches[0].clientY });
+      };
+      const dEnd = () => {
+        onDrawingDragEnd();
+        document.removeEventListener('touchmove', dMove);
+        document.removeEventListener('touchend', dEnd);
+      };
+      document.addEventListener('touchmove', dMove, { passive: false });
+      document.addEventListener('touchend', dEnd);
+      return;
+    }
+    // 空白處輕點：取消選取（與桌面行為一致）
+    if (state.selectedDrawingId) {
+      const t0 = e.touches[0];
+      const onTouchUp = (upE) => {
+        const t1 = upE.changedTouches && upE.changedTouches[0];
+        if (t1 && Math.abs(t1.clientX - t0.clientX) < 6 && Math.abs(t1.clientY - t0.clientY) < 6) {
+          selectDrawing(null);
+        }
+        document.removeEventListener('touchend', onTouchUp);
+      };
+      document.addEventListener('touchend', onTouchUp);
+    }
   }, { passive: false });
 }
 
@@ -4182,6 +4276,7 @@ function syncTopbarUI() {
 
 async function loadAndStart() {
   stopPlay();
+  if (typeof clearReviewLines === 'function') clearReviewLines();   // 換場景時移除檢討線
   // Reset in-progress drawing when switching context
   resetPendingPoints();
   state.posTool = null;
@@ -4337,6 +4432,7 @@ function checkPositionTriggers(newBar) {
   if (changed) {
     renderTrades();
     renderReport();
+    checkLossStreak();
   }
 }
 
@@ -4593,23 +4689,61 @@ function addPosStop(posId, type) {
 }
 
 let _closeTargetId = null;
+let _closeFrac = 1;   // 平倉比例（分批出場）
+function updateCloseInfo() {
+  const p = state.positions.find(x => x.id === _closeTargetId);
+  const c = state.candles[state.cursorIndex];
+  if (!p || !c) return;
+  const dir = p.side === 'long' ? 1 : -1;
+  const pnlPts = (c.close - p.entryPrice) * dir;
+  const part = p.size * _closeFrac;
+  const pnl = pnlPts * posPV(p) * part;
+  const info = symInfo(p.symbol);
+  $('close-info').innerHTML = `
+    <strong>${dispSym(p)}</strong> ${p.side === 'long' ? '多單' : '空單'} ·
+    進場 ${fmtPrice(p.entryPrice)} → 平倉 <strong>${fmtPrice(c.close)}</strong><br>
+    平掉 <strong>${part.toFixed(info.sizeDecimals)} ${info.sizeUnit}</strong>（${Math.round(_closeFrac * 100)}%）
+    ${_closeFrac < 1 ? `，續抱 ${(p.size - part).toFixed(info.sizeDecimals)} ${info.sizeUnit}` : ''}<br>
+    預估盈虧: <strong style="color:${pnl >= 0 ? 'var(--accent-2)' : 'var(--danger-2)'}">${fmtMoney(pnl)}</strong>
+  `;
+}
 function openCloseModal(posId) {
   const p = state.positions.find(x => x.id === posId);
   if (!p) return;
   _closeTargetId = posId;
   const c = state.candles[state.cursorIndex];
   if (!c) return;
+  _closeFrac = 1;
+  $$('#close-frac-row button').forEach(b => b.classList.toggle('active', b.dataset.frac === '1'));
+  updateCloseInfo();
   const dir = p.side === 'long' ? 1 : -1;
-  const pnlPts = (c.close - p.entryPrice) * dir;
-  const pnl = pnlPts * posPV(p) * p.size;
-  $('close-info').innerHTML = `
-    <strong>${dispSym(p)}</strong> ${p.side === 'long' ? '多單' : '空單'} ·
-    進場 ${fmtPrice(p.entryPrice)} → 平倉 <strong>${fmtPrice(c.close)}</strong><br>
-    預估盈虧: <strong style="color:${pnl >= 0 ? 'var(--accent-2)' : 'var(--danger-2)'}">${fmtMoney(pnl)}</strong>
-  `;
+  const pnl = (c.close - p.entryPrice) * dir * posPV(p) * p.size;
   $('close-reason').value = pnl >= 0 ? '提前獲利了結' : '提前砍單停損';
   $('close-note').value = '';
   $('close-modal').classList.add('show');
+}
+// 部分平倉：平掉的部分成為一筆獨立交易紀錄（風險額按比例分攤，R 各算各的）
+function closePartialPosition(p, frac, exitPrice, exitReason, exitTime, exitNote) {
+  const part = p.size * frac;
+  const partRisk = p.riskAmount * frac;
+  const dir = p.side === 'long' ? 1 : -1;
+  const pnlPts = (exitPrice - p.entryPrice) * dir;
+  const pnl = pnlPts * posPV(p) * part;
+  const rec = {
+    ...p,
+    id: uid(),
+    size: part,
+    riskAmount: partRisk,
+    status: 'closed',
+    exitPrice, exitReason, exitTime,
+    exitNote: `${exitNote ? exitNote + ' ' : ''}（部分平倉 ${Math.round(frac * 100)}%）`,
+    pnl, pnlPts,
+    rMultiple: partRisk > 0 ? pnl / partRisk : 0,
+  };
+  state.trades.unshift(rec);
+  p.size -= part;
+  p.riskAmount -= partRisk;
+  saveStorage();
 }
 function confirmManualClose() {
   const p = state.positions.find(x => x.id === _closeTargetId);
@@ -4618,7 +4752,8 @@ function confirmManualClose() {
   if (!c) return;
   const reason = $('close-reason').value;
   const note = $('close-note').value.trim();
-  closePosition(p, c.close, reason, c.time, note);
+  if (_closeFrac < 0.999) closePartialPosition(p, _closeFrac, c.close, reason, c.time, note);
+  else closePosition(p, c.close, reason, c.time, note);
   $('close-modal').classList.remove('show');
   _closeTargetId = null;
   renderPositions();
@@ -4626,7 +4761,8 @@ function confirmManualClose() {
   renderReport();
   updateHotStats();
   redrawPositionLines();
-  showToast('✓ 已平倉', 'success');
+  showToast(_closeFrac < 0.999 ? `✓ 已部分平倉 ${Math.round(_closeFrac * 100)}%，剩餘續抱` : '✓ 已平倉', 'success');
+  checkLossStreak();
 }
 
 function closePosition(p, exitPrice, exitReason, exitTime, exitNote) {
@@ -4648,6 +4784,33 @@ function closePosition(p, exitPrice, exitReason, exitTime, exitNote) {
   state.positions = state.positions.filter(x => x.id !== p.id);
   state.trades.unshift(p);
   saveStorage();
+}
+
+// ---------- 連敗熔斷 ----------
+// 目前 scope（盲測輪內 / 自由模式）最近的連續虧損筆數
+let _fuseNotified = 0;
+function currentLossStreak() {
+  const list = state.blind
+    ? state.trades.filter(t => t.blindId === state.blind.id)
+    : state.trades.filter(t => !t.blindId);
+  let n = 0;
+  for (const t of list) {                 // unshift 存入 → index 0 = 最新
+    if ((t.pnl || 0) < 0) n++;
+    else break;
+  }
+  return n;
+}
+// 連虧 3/5/7 筆時暫停回放並跳提醒；贏一筆歸零
+function checkLossStreak() {
+  const n = currentLossStreak();
+  if (n < 3) { _fuseNotified = 0; return; }
+  if ((n === 3 || n === 5 || n === 7) && _fuseNotified !== n) {
+    _fuseNotified = n;
+    stopPlay();
+    $('fuse-body').innerHTML =
+      `你已經<strong style="color:var(--danger-2);">連續虧損 ${n} 筆</strong>——先停一下。`;
+    $('fuse-modal').classList.add('show');
+  }
 }
 
 // ---------- Trade list ----------
@@ -4712,6 +4875,7 @@ function openTradeModal(id) {
     </div>
   `;
   $('trade-modal').classList.add('show');
+  $('btn-replay-trade').onclick = () => replayTrade(t.id);
   $('btn-delete-trade').onclick = () => {
     if (!confirm('確定刪除這筆交易紀錄？')) return;
     state.trades = state.trades.filter(x => x.id !== t.id);
@@ -4722,6 +4886,50 @@ function openTradeModal(id) {
     $('trade-modal').classList.remove('show');
     showToast('已刪除', 'success');
   };
+}
+
+// ---------- 一鍵回放檢討 ----------
+// 從交易紀錄跳回進場當根 K 棒（之後的走勢隱藏），重看自己當初看到什麼
+let _reviewLines = [];
+function clearReviewLines() {
+  _reviewLines.forEach(l => { try { candleSeries.removePriceLine(l); } catch {} });
+  _reviewLines = [];
+}
+async function replayTrade(tradeId) {
+  const t = state.trades.find(x => x.id === tradeId);
+  if (!t) return;
+  if (state.blind) {
+    // 盲測中只能回放本輪交易（其他標的會洩題也載不了）
+    if (t.blindId !== state.blind.id) { showToast('盲測進行中，只能回放本輪的交易', 'error'); return; }
+  } else if (t.symbol !== state.symbol || t.timeframe !== state.timeframe) {
+    if (!SYMBOLS[t.symbol]) { showToast('這筆交易的標的已不在清單中', 'error'); return; }
+    state.symbol = t.symbol;
+    state.timeframe = t.timeframe;
+    syncTopbarUI();
+    await loadAndStart();
+  }
+  const idx = state.candles.findIndex(c => c.time >= t.entryTime);
+  if (idx < 0) { showToast('找不到該筆交易對應的 K 棒', 'error'); return; }
+  stopPlay();
+  state.cursorIndex = state.blind ? Math.min(idx, state.blind.endIndex) : idx;
+  renderChart();
+  updateReplayInfo();
+  refreshOrderForm();
+  renderPositions();
+  updateHotStats();
+  clearReviewLines();
+  _reviewLines.push(candleSeries.createPriceLine({
+    price: t.entryPrice, color: '#b2b5be', lineWidth: 1, lineStyle: 3,
+    title: `📍 ${t.side === 'long' ? '多' : '空'}進場 ${fmtPrice(t.entryPrice)}`,
+  }));
+  if (t.exitPrice != null) {
+    _reviewLines.push(candleSeries.createPriceLine({
+      price: t.exitPrice, color: '#f7a600', lineWidth: 1, lineStyle: 3,
+      title: `出場 ${fmtPrice(t.exitPrice)}（${t.exitReason || ''}）`,
+    }));
+  }
+  $('trade-modal').classList.remove('show');
+  showToast('📍 已跳到進場當根——按 → 逐根重看這筆交易的發展', 'success');
 }
 
 // ---------- Report ----------
@@ -5201,6 +5409,7 @@ async function startBlindSession() {
 async function enterBlindReplay() {
   const b = state.blind;
   stopPlay();
+  if (typeof clearReviewLines === 'function') clearReviewLines();
   resetPendingPoints();
   state.posTool = null;
   updatePosToolButtons();
@@ -5469,6 +5678,13 @@ function wireEvents() {
 
   // 選取繪圖浮動列的刪除鈕
   $('dsb-delete').addEventListener('click', deleteSelectedDrawing);
+
+  // 平倉比例（分批出場）
+  $$('#close-frac-row button').forEach(b => b.addEventListener('click', () => {
+    _closeFrac = +b.dataset.frac;
+    $$('#close-frac-row button').forEach(x => x.classList.toggle('active', x === b));
+    updateCloseInfo();
+  }));
 
   // Modals
   $$('[data-close]').forEach(b => b.addEventListener('click', () => $(b.dataset.close).classList.remove('show')));
