@@ -358,6 +358,24 @@ input, textarea { user-select: text; }
 #draw-canvas.active { cursor: crosshair; }
 
 /* Drawing toolbar */
+#draw-selected-bar {
+  position: absolute;
+  top: 10px; left: 50%; transform: translateX(-50%);
+  z-index: 30;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 10px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+  font-size: 12px; color: var(--text-2);
+}
+#draw-selected-bar button {
+  background: var(--bg-4); color: var(--text);
+  border: none; border-radius: 6px;
+  padding: 4px 10px; font-size: 12px; cursor: pointer;
+}
+#draw-selected-bar button:hover { background: var(--danger); color: #fff; }
 .draw-toolbar {
   width: 44px;
   background: var(--bg-2);
@@ -1286,6 +1304,11 @@ input, textarea { user-select: text; }
           <canvas id="draw-canvas"></canvas>
           <div class="chart-overlay" id="chart-overlay"></div>
           <div class="chart-loading" id="chart-loading">載入歷史資料中…</div>
+          <!-- 選取繪圖時浮出的操作列（點圖形→刪除，不必記 Delete 快捷鍵） -->
+          <div id="draw-selected-bar" style="display:none;">
+            <span id="dsb-label"></span>
+            <button id="dsb-delete" title="刪除選取的繪圖（Delete）">🗑 刪除</button>
+          </div>
         </div>
         <div id="subpanes-wrap"></div>
 
@@ -2811,8 +2834,29 @@ function priceToY(price) {
   return candleSeries.priceToCoordinate(price);
 }
 
+// 選取繪圖時的浮動操作列（顯示類型 + 刪除鈕）；redrawDrawings 每次都會同步，狀態不會漏
+const DRAW_TYPE_LABEL = {
+  trend: '趨勢線', hline: '水平線', rect: '矩形', fib: '斐波那契',
+  ray: '射線', extline: '延伸線', vline: '垂直線', channel: '平行通道',
+  ellipse: '橢圓', arrow: '箭頭', text: '文字', pricelabel: '價格標籤', measure: '測量',
+};
+function updateDrawSelectedBar() {
+  const bar = $('draw-selected-bar');
+  if (!bar) return;
+  const d = state.selectedDrawingId
+    ? getCurrentDrawings().find(x => x.id === state.selectedDrawingId)
+    : null;
+  if (d) {
+    $('dsb-label').textContent = DRAW_TYPE_LABEL[d.type] || '繪圖';
+    bar.style.display = 'flex';
+  } else {
+    bar.style.display = 'none';
+  }
+}
+
 function redrawDrawings() {
   if (!drawCtx || !drawCanvas) return;
+  updateDrawSelectedBar();
   const w = drawCanvas.parentElement.clientWidth;
   const h = drawCanvas.parentElement.clientHeight;
   drawCtx.clearRect(0, 0, w, h);
@@ -3736,6 +3780,13 @@ function findDraggableLineAtY(y) {
         return { pos: p, type: 'tp' };
       }
     }
+    // 已成交持倉的成本線：抓住往上/往下拖即可設定停利/停損（放開的位置決定是哪一條）
+    if (p.status === 'open') {
+      const eY = candleSeries.priceToCoordinate(p.entryPrice);
+      if (eY != null && Math.abs(y - eY) <= DRAG_HIT_PX) {
+        return { pos: p, type: 'entryset' };
+      }
+    }
   }
   return null;
 }
@@ -3758,6 +3809,21 @@ function onDragMove(e) {
   const dp = priceDp(refPrice);
   const eps = Math.pow(10, -dp);
   const f = Math.pow(10, dp);
+  // 拖成本線設定停損/停利：游標在獲利側→停利、虧損側→停損（虛線即時預覽價位與金額）
+  if (dragState.type === 'entryset') {
+    newPrice = Math.round(newPrice * f) / f;
+    const profitSide = p.side === 'long' ? newPrice > p.entryPrice : newPrice < p.entryPrice;
+    dragState.setTarget = profitSide ? 'tp' : 'sl';
+    dragState.setPrice = newPrice;
+    if (dragState.tempLine) {
+      dragState.tempLine.applyOptions({
+        price: newPrice,
+        color: profitSide ? '#26a69a' : '#f77c80',
+        title: `${profitSide ? '🎯 設停利' : '🔻 設停損'} ${fmtPrice(newPrice)}  ${fmtMoneySigned(pnlAtPrice(p, newPrice))}`,
+      });
+    }
+    return;
+  }
   // 拖掛單進場線：整組平移（SL/TP 跟著移動，距離不變）
   if (dragState.type === 'pentry') {
     newPrice = Math.round(newPrice * f) / f;
@@ -3803,6 +3869,33 @@ function onDragMove(e) {
 function onDragEnd() {
   if (!dragState) return;
   const p = state.positions.find(x => x.id === dragState.posId);
+  // 成本線拖曳設定：移除預覽虛線，把放開的價位寫進停損或停利
+  if (dragState.type === 'entryset') {
+    if (dragState.tempLine) { try { candleSeries.removePriceLine(dragState.tempLine); } catch {} }
+    if (p && dragState.setTarget && dragState.setPrice != null) {
+      const curBar = state.candles[state.cursorIndex];
+      const ref = curBar ? curBar.close : p.entryPrice;
+      const dp = priceDp(ref);
+      const eps = Math.pow(10, -dp);
+      let price = dragState.setPrice;
+      // 與拖曳 SL/TP 相同的保護：必須在現價的正確側，否則掛上去當根就觸發
+      if (p.side === 'long') price = dragState.setTarget === 'sl' ? Math.min(price, ref - eps) : Math.max(price, ref + eps);
+      else price = dragState.setTarget === 'sl' ? Math.max(price, ref + eps) : Math.min(price, ref - eps);
+      price = +price.toFixed(dp);
+      if (dragState.setTarget === 'sl') p.stopLoss = price;
+      else p.takeProfit = price;
+      saveStorage();
+      redrawPositionLines();
+      renderPositions();
+      updateHotStats();
+      showToast(`已設定${dragState.setTarget === 'sl' ? '停損' : '停利'} → ${fmtPrice(price)}（預期 ${fmtMoneySigned(pnlAtPrice(p, price))}）`, 'success');
+    }
+    document.body.style.cursor = '';
+    document.removeEventListener('mousemove', onDragMove);
+    document.removeEventListener('mouseup', onDragEnd);
+    dragState = null;
+    return;
+  }
   if (p) {
     saveStorage();
     // Reset title (remove dragging indicator)
@@ -3879,10 +3972,19 @@ function initDragSLTP() {
       dragState = {
         posId: slTpHit.pos.id,
         type: slTpHit.type,
-        priceLine: slTpHit.type === 'sl' ? lines.sl : slTpHit.type === 'tp' ? lines.tp : lines.entry,
+        priceLine: slTpHit.type === 'sl' ? lines.sl : slTpHit.type === 'tp' ? lines.tp
+          : slTpHit.type === 'pentry' ? lines.entry : null,
         originalPrice: slTpHit.type === 'sl' ? slTpHit.pos.stopLoss
           : slTpHit.type === 'tp' ? slTpHit.pos.takeProfit : slTpHit.pos.entryPrice,
       };
+      // 成本線拖曳設定：用一條暫時虛線跟著游標，放開才真正設定停損/停利
+      if (slTpHit.type === 'entryset') {
+        dragState.tempLine = candleSeries.createPriceLine({
+          price: slTpHit.pos.entryPrice,
+          color: '#b2b5be', lineWidth: 1, lineStyle: 3,
+          title: '↕ 往上設停利 / 往下設停損',
+        });
+      }
       document.body.style.cursor = 'ns-resize';
       document.addEventListener('mousemove', onDragMove);
       document.addEventListener('mouseup', onDragEnd);
@@ -3940,8 +4042,10 @@ function initDragSLTP() {
     dragState = {
       posId: hit.pos.id,
       type: hit.type,
-      priceLine: hit.type === 'sl' ? lines.sl : lines.tp,
-      originalPrice: hit.type === 'sl' ? hit.pos.stopLoss : hit.pos.takeProfit,
+      priceLine: hit.type === 'sl' ? lines.sl : hit.type === 'tp' ? lines.tp
+        : hit.type === 'pentry' ? lines.entry : null,
+      originalPrice: hit.type === 'sl' ? hit.pos.stopLoss
+        : hit.type === 'tp' ? hit.pos.takeProfit : hit.pos.entryPrice,
     };
     const touchMove = (ev) => {
       if (ev.touches.length !== 1) return;
@@ -5362,6 +5466,9 @@ function wireEvents() {
     });
   });
   $('btn-submit-order').addEventListener('click', submitOrder);
+
+  // 選取繪圖浮動列的刪除鈕
+  $('dsb-delete').addEventListener('click', deleteSelectedDrawing);
 
   // Modals
   $$('[data-close]').forEach(b => b.addEventListener('click', () => $(b.dataset.close).classList.remove('show')));
