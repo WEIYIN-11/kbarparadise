@@ -4499,8 +4499,10 @@ function checkPositionTriggers(newBar) {
     if (p.symbol !== state.symbol || p.timeframe !== state.timeframe || !inScope(p)) continue;
     // 時間守衛：回放檢討或倒退 K 棒時，游標會回到部位建立之前——
     // 那些「過去」的 K 棒不該觸發成交或停損停利（否則出場時間會早於進場時間）
+    // 用 <= ：進場/成交當根本來就不檢查停損停利，倒退後重走那一根也不該補觸發
+    // （否則會產生「出場時間 = 進場時間」、持有 0 根的假停損）
     const refTime = p.status === 'pending' ? (p.createdBarTime ?? p.entryTime) : p.entryTime;
-    if (refTime != null && newBar.time < refTime) continue;
+    if (refTime != null && newBar.time <= refTime) continue;
     // 掛單：價格觸及進場價才成交；成交當根不檢查停損/停利（下一根才開始）
     if (p.status === 'pending') {
       if (newBar.low <= p.entryPrice && p.entryPrice <= newBar.high) {
@@ -4635,9 +4637,9 @@ function submitOrder() {
   const c = state.candles[state.cursorIndex];
   if (!c) { showToast('請先載入資料', 'error'); return; }
   // 手指/滑鼠連點兩下會送出兩張一模一樣的單，風險直接翻倍
-  const now = Date.now();
-  if (now - _submitLock < 400) return;
-  _submitLock = now;
+  // （鎖只在「真的建倉」時才寫入——見下方 _submitLock = Date.now()；
+  //   否則被驗證退件的單也會吃掉冷卻時間，使用者改好立刻重送會靜默失敗）
+  if (Date.now() - _submitLock < 400) return;
   const entry = +$('order-entry').value;
   const sl = +$('order-sl').value || null;
   const tp = +$('order-tp').value || null;
@@ -4679,6 +4681,7 @@ function submitOrder() {
     blindId: state.blind ? state.blind.id : null,
   };
   state.positions.push(pos);
+  _submitLock = Date.now();   // 建倉成功才起算冷卻
   saveStorage();
 
   // Reset order form (keep risk/strategy)
@@ -4927,13 +4930,13 @@ function currentLossStreak() {
     ? state.trades.filter(t => t.blindId === state.blind.id)
     : state.trades.filter(t => !t.blindId);
   // 同一原始部位的分批出場算「一筆」——分三段停損不該被當成連虧三次
-  let n = 0, lastGroup = null;
+  // 用 Set 而非比對前一筆：分批中間被其他部位的平倉插隊時也要正確合併
+  const seen = new Set();
   for (const t of list) {                 // unshift 存入 → index 0 = 最新
     if ((t.pnl || 0) >= 0) break;
-    const g = t.parentId || t.id;
-    if (g !== lastGroup) { n++; lastGroup = g; }
+    seen.add(t.parentId || t.id);
   }
-  return n;
+  return seen.size;
 }
 // 連虧 3/5/7 筆時暫停回放並跳提醒；贏一筆歸零
 function checkLossStreak() {
@@ -5113,16 +5116,15 @@ function renderReport() {
   const avgR = trades.reduce((s, t) => s + (t.rMultiple || 0), 0) / trades.length;
 
   // Max consecutive losses
-  let maxLossStreak = 0, curStreak = 0, streakGroup = null;
+  let maxLossStreak = 0, streakSet = new Set();
   // trades are unshifted so newest first; compute over chronological order
-  // 同一原始部位的分批出場算一筆（與連敗熔斷的計數口徑一致）
+  // 同一原始部位的分批出場算一筆（與連敗熔斷的計數口徑一致，交錯時也正確合併）
   const chrono = [...trades].sort((a, b) => a.exitTime - b.exitTime);
   for (const t of chrono) {
     if (t.pnl <= 0) {
-      const g = t.parentId || t.id;
-      if (g !== streakGroup) { curStreak++; streakGroup = g; }
-      maxLossStreak = Math.max(maxLossStreak, curStreak);
-    } else { curStreak = 0; streakGroup = null; }
+      streakSet.add(t.parentId || t.id);
+      maxLossStreak = Math.max(maxLossStreak, streakSet.size);
+    } else { streakSet = new Set(); }
   }
 
   // strategy x exitReason crosstab
@@ -5736,6 +5738,7 @@ function finishBlindSession(endReason, opts = {}) {
   };
   if (!opts.skipHistory) state.blindHistory.unshift(summary);
   delete state.drawings[`blind_${b.id}`];   // 盲測畫線用完即丟
+  delete _fuseNotified[b.id];               // 該輪的熔斷計數一起收掉，不留殘值
   state.blind = null;
   saveStorage();
   showBlindResult(summary, opts.skipHistory);
