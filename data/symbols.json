@@ -1,5 +1,5 @@
 {
- "generatedAt": "2026-08-10T10:32:30.277Z",
+ "generatedAt": "2026-08-18T13:28:33.615Z",
  "categories": {
   "futures": "期指",
   "crypto": "加密貨幣",
@@ -19,11 +19,11 @@
     "1h"
    ],
    "barCounts": {
-    "1d": 1662,
+    "1d": 1668,
     "1h": 11252
    },
    "firstTime": 1577941200,
-   "lastTime": 1786334400
+   "lastTime": 1787025600
   },
   {
    "key": "TXF",
@@ -37,11 +37,11 @@
     "1h"
    ],
    "barCounts": {
-    "1d": 1603,
+    "1d": 1609,
     "1h": 2380
    },
    "firstTime": 1577923200,
-   "lastTime": 1786320000
+   "lastTime": 1787011200
   },
   {
    "key": "BTC",
@@ -55,11 +55,11 @@
     "1h"
    ],
    "barCounts": {
-    "1d": 2414,
-    "1h": 57891
+    "1d": 2422,
+    "1h": 58086
    },
    "firstTime": 1577836800,
-   "lastTime": 1786320000
+   "lastTime": 1787011200
   },
   {
    "key": "ETH",
@@ -73,11 +73,11 @@
     "1h"
    ],
    "barCounts": {
-    "1d": 2414,
+    "1d": 2422,
     "1h": 17280
    },
    "firstTime": 1577836800,
-   "lastTime": 1786320000
+   "lastTime": 1787011200
   },
   {
    "key": "SOL",
@@ -91,11 +91,11 @@
     "1h"
    ],
    "barCounts": {
-    "1d": 2191,
+    "1d": 2199,
     "1h": 17280
    },
    "firstTime": 1597104000,
-   "lastTime": 1786320000
+   "lastTime": 1787011200
   },
   {
    "key": "XRP",
@@ -108,26 +108,10 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 2414
+    "1d": 2422
    },
    "firstTime": 1577836800,
-   "lastTime": 1786320000
-  },
-  {
-   "key": "ZEC",
-   "name": "ZEC",
-   "category": "crypto",
-   "pointValue": 1,
-   "sizeUnit": "顆",
-   "sizeDecimals": 2,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 2414
-   },
-   "firstTime": 1577836800,
-   "lastTime": 1786320000
+   "lastTime": 1787011200
   },
   {
    "key": "BNB",
@@ -140,42 +124,26 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 2414
+    "1d": 2422
    },
    "firstTime": 1577836800,
-   "lastTime": 1786320000
+   "lastTime": 1787011200
   },
   {
-   "key": "BANK",
-   "name": "BANK",
+   "key": "ZEC",
+   "name": "ZEC Zcash",
    "category": "crypto",
    "pointValue": 1,
    "sizeUnit": "顆",
-   "sizeDecimals": 0,
+   "sizeDecimals": 2,
    "tfs": [
     "1d"
    ],
    "barCounts": {
-    "1d": 271
+    "1d": 2422
    },
-   "firstTime": 1762992000,
-   "lastTime": 1786320000
-  },
-  {
-   "key": "SNDKB",
-   "name": "SNDKB",
-   "category": "crypto",
-   "pointValue": 1,
-   "sizeUnit": "顆",
-   "sizeDecimals": 4,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 61
-   },
-   "firstTime": 1781136000,
-   "lastTime": 1786320000
+   "firstTime": 1577836800,
+   "lastTime": 1787011200
   },
   {
    "key": "DOGE",
@@ -188,26 +156,26 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 2414
+    "1d": 2422
    },
    "firstTime": 1577836800,
-   "lastTime": 1786320000
+   "lastTime": 1787011200
   },
   {
-   "key": "SPCXB",
-   "name": "SPCXB",
+   "key": "TUT",
+   "name": "TUT Tutorial",
    "category": "crypto",
    "pointValue": 1,
    "sizeUnit": "顆",
-   "sizeDecimals": 2,
+   "sizeDecimals": 0,
    "tfs": [
     "1d"
    ],
    "barCounts": {
-    "1d": 60
+    "1d": 510
    },
-   "firstTime": 1781222400,
-   "lastTime": 1786320000
+   "firstTime": 1743033600,
+   "lastTime": 1787011200
   },
   {
    "key": "TRX",
@@ -220,10 +188,10 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 2414
+    "1d": 2422
    },
    "firstTime": 1577836800,
-   "lastTime": 1786320000
+   "lastTime": 1787011200
   },
   {
    "key": "TON",
@@ -252,30 +220,14 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 2414
+    "1d": 2422
    },
    "firstTime": 1577836800,
-   "lastTime": 1786320000
+   "lastTime": 1787011200
   },
   {
-   "key": "XAUT",
-   "name": "XAUT",
-   "category": "crypto",
-   "pointValue": 1,
-   "sizeUnit": "顆",
-   "sizeDecimals": 4,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 138
-   },
-   "firstTime": 1774483200,
-   "lastTime": 1786320000
-  },
-  {
-   "key": "NEAR",
-   "name": "NEAR NEAR Protocol",
+   "key": "ACE",
+   "name": "ACE Fusionist",
    "category": "crypto",
    "pointValue": 1,
    "sizeUnit": "顆",
@@ -284,74 +236,10 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 2127
+    "1d": 975
    },
-   "firstTime": 1602633600,
-   "lastTime": 1786320000
-  },
-  {
-   "key": "TUT",
-   "name": "TUT",
-   "category": "crypto",
-   "pointValue": 1,
-   "sizeUnit": "顆",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 502
-   },
-   "firstTime": 1743033600,
-   "lastTime": 1786320000
-  },
-  {
-   "key": "U",
-   "name": "U",
-   "category": "crypto",
-   "pointValue": 1,
-   "sizeUnit": "顆",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 210
-   },
-   "firstTime": 1768262400,
-   "lastTime": 1786320000
-  },
-  {
-   "key": "PEPE",
-   "name": "PEPE 佩佩蛙",
-   "category": "crypto",
-   "pointValue": 1,
-   "sizeUnit": "顆",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 1194
-   },
-   "firstTime": 1683244800,
-   "lastTime": 1786320000
-  },
-  {
-   "key": "WLD",
-   "name": "WLD Worldcoin",
-   "category": "crypto",
-   "pointValue": 1,
-   "sizeUnit": "顆",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 1114
-   },
-   "firstTime": 1690156800,
-   "lastTime": 1786320000
+   "firstTime": 1702857600,
+   "lastTime": 1787011200
   },
   {
    "key": "UNI",
@@ -364,10 +252,26 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 2154
+    "1d": 2162
    },
    "firstTime": 1600300800,
-   "lastTime": 1786320000
+   "lastTime": 1787011200
+  },
+  {
+   "key": "NEAR",
+   "name": "NEAR NEAR Protocol",
+   "category": "crypto",
+   "pointValue": 1,
+   "sizeUnit": "顆",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 2135
+   },
+   "firstTime": 1602633600,
+   "lastTime": 1787011200
   },
   {
    "key": "SUI",
@@ -380,10 +284,58 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1196
+    "1d": 1204
    },
    "firstTime": 1683072000,
-   "lastTime": 1786320000
+   "lastTime": 1787011200
+  },
+  {
+   "key": "LINK",
+   "name": "LINK Chainlink",
+   "category": "crypto",
+   "pointValue": 1,
+   "sizeUnit": "顆",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 2422
+   },
+   "firstTime": 1577836800,
+   "lastTime": 1787011200
+  },
+  {
+   "key": "WLD",
+   "name": "WLD Worldcoin",
+   "category": "crypto",
+   "pointValue": 1,
+   "sizeUnit": "顆",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 1122
+   },
+   "firstTime": 1690156800,
+   "lastTime": 1787011200
+  },
+  {
+   "key": "PEPE",
+   "name": "PEPE 佩佩蛙",
+   "category": "crypto",
+   "pointValue": 1,
+   "sizeUnit": "顆",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 1202
+   },
+   "firstTime": 1683244800,
+   "lastTime": 1787011200
   },
   {
    "key": "AAVE",
@@ -396,26 +348,42 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 2126
+    "1d": 2134
    },
    "firstTime": 1602720000,
-   "lastTime": 1786320000
+   "lastTime": 1787011200
   },
   {
-   "key": "SKHYB",
-   "name": "SKHYB",
+   "key": "AVAX",
+   "name": "AVAX Avalanche",
    "category": "crypto",
    "pointValue": 1,
    "sizeUnit": "顆",
-   "sizeDecimals": 2,
+   "sizeDecimals": 0,
    "tfs": [
     "1d"
    ],
    "barCounts": {
-    "1d": 29
+    "1d": 2157
    },
-   "firstTime": 1783900800,
-   "lastTime": 1786320000
+   "firstTime": 1600732800,
+   "lastTime": 1787011200
+  },
+  {
+   "key": "BICO",
+   "name": "BICO Biconomy",
+   "category": "crypto",
+   "pointValue": 1,
+   "sizeUnit": "顆",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 1714
+   },
+   "firstTime": 1639008000,
+   "lastTime": 1787011200
   },
   {
    "key": "ONDO",
@@ -428,26 +396,10 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 487
+    "1d": 495
    },
    "firstTime": 1744329600,
-   "lastTime": 1786320000
-  },
-  {
-   "key": "MMT",
-   "name": "MMT",
-   "category": "crypto",
-   "pointValue": 1,
-   "sizeUnit": "顆",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 280
-   },
-   "firstTime": 1762214400,
-   "lastTime": 1786320000
+   "lastTime": 1787011200
   },
   {
    "key": "LTC",
@@ -460,14 +412,14 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 2414
+    "1d": 2422
    },
    "firstTime": 1577836800,
-   "lastTime": 1786320000
+   "lastTime": 1787011200
   },
   {
-   "key": "PUMP",
-   "name": "PUMP",
+   "key": "KAITO",
+   "name": "KAITO Kaito",
    "category": "crypto",
    "pointValue": 1,
    "sizeUnit": "顆",
@@ -476,26 +428,10 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 334
+    "1d": 545
    },
-   "firstTime": 1757548800,
-   "lastTime": 1786320000
-  },
-  {
-   "key": "ENA",
-   "name": "ENA Ethena",
-   "category": "crypto",
-   "pointValue": 1,
-   "sizeUnit": "顆",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 861
-   },
-   "firstTime": 1712016000,
-   "lastTime": 1786320000
+   "firstTime": 1740009600,
+   "lastTime": 1787011200
   },
   {
    "key": "TAO",
@@ -508,26 +444,90 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 852
+    "1d": 860
    },
    "firstTime": 1712793600,
-   "lastTime": 1786320000
+   "lastTime": 1787011200
   },
   {
-   "key": "PAXG",
-   "name": "PAXG 黃金代幣",
+   "key": "HOME",
+   "name": "HOME DeFi App",
    "category": "crypto",
    "pointValue": 1,
    "sizeUnit": "顆",
-   "sizeDecimals": 4,
+   "sizeDecimals": 0,
    "tfs": [
     "1d"
    ],
    "barCounts": {
-    "1d": 2174
+    "1d": 433
    },
-   "firstTime": 1598572800,
-   "lastTime": 1786320000
+   "firstTime": 1749686400,
+   "lastTime": 1787011200
+  },
+  {
+   "key": "XLM",
+   "name": "XLM 恆星幣",
+   "category": "crypto",
+   "pointValue": 1,
+   "sizeUnit": "顆",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 2422
+   },
+   "firstTime": 1577836800,
+   "lastTime": 1787011200
+  },
+  {
+   "key": "FET",
+   "name": "FET Fetch.ai",
+   "category": "crypto",
+   "pointValue": 1,
+   "sizeUnit": "顆",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 2422
+   },
+   "firstTime": 1577836800,
+   "lastTime": 1787011200
+  },
+  {
+   "key": "NFP",
+   "name": "NFP NFPrompt",
+   "category": "crypto",
+   "pointValue": 1,
+   "sizeUnit": "顆",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 927
+   },
+   "firstTime": 1703635200,
+   "lastTime": 1783641600
+  },
+  {
+   "key": "BMT",
+   "name": "BMT Bubblemaps",
+   "category": "crypto",
+   "pointValue": 1,
+   "sizeUnit": "顆",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 519
+   },
+   "firstTime": 1742256000,
+   "lastTime": 1787011200
   },
   {
    "key": "NVDA",
@@ -540,10 +540,10 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1658
+    "1d": 1663
    },
    "firstTime": 1577975400,
-   "lastTime": 1786109400
+   "lastTime": 1786714200
   },
   {
    "key": "INTC",
@@ -556,42 +556,10 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1658
+    "1d": 1663
    },
    "firstTime": 1577975400,
-   "lastTime": 1786109400
-  },
-  {
-   "key": "AAL",
-   "name": "AAL 美國航空",
-   "category": "us",
-   "pointValue": 1,
-   "sizeUnit": "股",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 1658
-   },
-   "firstTime": 1577975400,
-   "lastTime": 1786109400
-  },
-  {
-   "key": "SOFI",
-   "name": "SOFI SoFi",
-   "category": "us",
-   "pointValue": 1,
-   "sizeUnit": "股",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 1405
-   },
-   "firstTime": 1609770600,
-   "lastTime": 1786109400
+   "lastTime": 1786714200
   },
   {
    "key": "SOXL",
@@ -604,10 +572,42 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1658
+    "1d": 1663
    },
    "firstTime": 1577975400,
-   "lastTime": 1786109400
+   "lastTime": 1786714200
+  },
+  {
+   "key": "SOFI",
+   "name": "SOFI SoFi",
+   "category": "us",
+   "pointValue": 1,
+   "sizeUnit": "股",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 1410
+   },
+   "firstTime": 1609770600,
+   "lastTime": 1786714200
+  },
+  {
+   "key": "AAL",
+   "name": "AAL 美國航空",
+   "category": "us",
+   "pointValue": 1,
+   "sizeUnit": "股",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 1663
+   },
+   "firstTime": 1577975400,
+   "lastTime": 1786714200
   },
   {
    "key": "T",
@@ -620,170 +620,10 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1658
+    "1d": 1663
    },
    "firstTime": 1577975400,
-   "lastTime": 1786109400
-  },
-  {
-   "key": "TQQQ",
-   "name": "TQQQ 納指3X ETF",
-   "category": "us",
-   "pointValue": 1,
-   "sizeUnit": "股",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 1658
-   },
-   "firstTime": 1577975400,
-   "lastTime": 1786109400
-  },
-  {
-   "key": "AAPL",
-   "name": "AAPL 蘋果",
-   "category": "us",
-   "pointValue": 1,
-   "sizeUnit": "股",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 1658
-   },
-   "firstTime": 1577975400,
-   "lastTime": 1786109400
-  },
-  {
-   "key": "F",
-   "name": "F 福特",
-   "category": "us",
-   "pointValue": 1,
-   "sizeUnit": "股",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 1658
-   },
-   "firstTime": 1577975400,
-   "lastTime": 1786109400
-  },
-  {
-   "key": "SPY",
-   "name": "SPY 標普500 ETF",
-   "category": "us",
-   "pointValue": 1,
-   "sizeUnit": "股",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 1658
-   },
-   "firstTime": 1577975400,
-   "lastTime": 1786109400
-  },
-  {
-   "key": "MARA",
-   "name": "MARA Marathon",
-   "category": "us",
-   "pointValue": 1,
-   "sizeUnit": "股",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 1658
-   },
-   "firstTime": 1577975400,
-   "lastTime": 1786109400
-  },
-  {
-   "key": "AMC",
-   "name": "AMC AMC院線",
-   "category": "us",
-   "pointValue": 1,
-   "sizeUnit": "股",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 1658
-   },
-   "firstTime": 1577975400,
-   "lastTime": 1786109400
-  },
-  {
-   "key": "AMZN",
-   "name": "AMZN 亞馬遜",
-   "category": "us",
-   "pointValue": 1,
-   "sizeUnit": "股",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 1658
-   },
-   "firstTime": 1577975400,
-   "lastTime": 1786109400
-  },
-  {
-   "key": "NFLX",
-   "name": "NFLX 網飛",
-   "category": "us",
-   "pointValue": 1,
-   "sizeUnit": "股",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 1658
-   },
-   "firstTime": 1577975400,
-   "lastTime": 1786109400
-  },
-  {
-   "key": "MU",
-   "name": "MU 美光",
-   "category": "us",
-   "pointValue": 1,
-   "sizeUnit": "股",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 1658
-   },
-   "firstTime": 1577975400,
-   "lastTime": 1786109400
-  },
-  {
-   "key": "PLTR",
-   "name": "PLTR Palantir",
-   "category": "us",
-   "pointValue": 1,
-   "sizeUnit": "股",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 1470
-   },
-   "firstTime": 1601472600,
-   "lastTime": 1786109400
+   "lastTime": 1786714200
   },
   {
    "key": "SMCI",
@@ -796,14 +636,14 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1658
+    "1d": 1663
    },
    "firstTime": 1577975400,
-   "lastTime": 1786109400
+   "lastTime": 1786714200
   },
   {
-   "key": "QQQ",
-   "name": "QQQ 那斯達克 ETF",
+   "key": "TQQQ",
+   "name": "TQQQ 納指3X ETF",
    "category": "us",
    "pointValue": 1,
    "sizeUnit": "股",
@@ -812,14 +652,14 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1658
+    "1d": 1663
    },
    "firstTime": 1577975400,
-   "lastTime": 1786109400
+   "lastTime": 1786714200
   },
   {
-   "key": "PFE",
-   "name": "PFE 輝瑞",
+   "key": "F",
+   "name": "F 福特",
    "category": "us",
    "pointValue": 1,
    "sizeUnit": "股",
@@ -828,10 +668,122 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1658
+    "1d": 1663
    },
    "firstTime": 1577975400,
-   "lastTime": 1786109400
+   "lastTime": 1786714200
+  },
+  {
+   "key": "AAPL",
+   "name": "AAPL 蘋果",
+   "category": "us",
+   "pointValue": 1,
+   "sizeUnit": "股",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 1663
+   },
+   "firstTime": 1577975400,
+   "lastTime": 1786714200
+  },
+  {
+   "key": "AMZN",
+   "name": "AMZN 亞馬遜",
+   "category": "us",
+   "pointValue": 1,
+   "sizeUnit": "股",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 1663
+   },
+   "firstTime": 1577975400,
+   "lastTime": 1786714200
+  },
+  {
+   "key": "SPY",
+   "name": "SPY 標普500 ETF",
+   "category": "us",
+   "pointValue": 1,
+   "sizeUnit": "股",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 1663
+   },
+   "firstTime": 1577975400,
+   "lastTime": 1786714200
+  },
+  {
+   "key": "MARA",
+   "name": "MARA Marathon",
+   "category": "us",
+   "pointValue": 1,
+   "sizeUnit": "股",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 1663
+   },
+   "firstTime": 1577975400,
+   "lastTime": 1786714200
+  },
+  {
+   "key": "PLTR",
+   "name": "PLTR Palantir",
+   "category": "us",
+   "pointValue": 1,
+   "sizeUnit": "股",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 1475
+   },
+   "firstTime": 1601472600,
+   "lastTime": 1786714200
+  },
+  {
+   "key": "AMC",
+   "name": "AMC AMC院線",
+   "category": "us",
+   "pointValue": 1,
+   "sizeUnit": "股",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 1663
+   },
+   "firstTime": 1577975400,
+   "lastTime": 1786714200
+  },
+  {
+   "key": "MU",
+   "name": "MU 美光",
+   "category": "us",
+   "pointValue": 1,
+   "sizeUnit": "股",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 1663
+   },
+   "firstTime": 1577975400,
+   "lastTime": 1786714200
   },
   {
    "key": "SNAP",
@@ -844,10 +796,10 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1658
+    "1d": 1663
    },
    "firstTime": 1577975400,
-   "lastTime": 1786109400
+   "lastTime": 1786714200
   },
   {
    "key": "TSLA",
@@ -860,10 +812,58 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1658
+    "1d": 1663
    },
    "firstTime": 1577975400,
-   "lastTime": 1786109400
+   "lastTime": 1786714200
+  },
+  {
+   "key": "PFE",
+   "name": "PFE 輝瑞",
+   "category": "us",
+   "pointValue": 1,
+   "sizeUnit": "股",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 1663
+   },
+   "firstTime": 1577975400,
+   "lastTime": 1786714200
+  },
+  {
+   "key": "QQQ",
+   "name": "QQQ 那斯達克 ETF",
+   "category": "us",
+   "pointValue": 1,
+   "sizeUnit": "股",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 1663
+   },
+   "firstTime": 1577975400,
+   "lastTime": 1786714200
+  },
+  {
+   "key": "NFLX",
+   "name": "NFLX 網飛",
+   "category": "us",
+   "pointValue": 1,
+   "sizeUnit": "股",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 1663
+   },
+   "firstTime": 1577975400,
+   "lastTime": 1786714200
   },
   {
    "key": "MSFT",
@@ -876,10 +876,10 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1658
+    "1d": 1663
    },
    "firstTime": 1577975400,
-   "lastTime": 1786109400
+   "lastTime": 1786714200
   },
   {
    "key": "ORCL",
@@ -892,42 +892,10 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1658
+    "1d": 1663
    },
    "firstTime": 1577975400,
-   "lastTime": 1786109400
-  },
-  {
-   "key": "RIVN",
-   "name": "RIVN Rivian",
-   "category": "us",
-   "pointValue": 1,
-   "sizeUnit": "股",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 1189
-   },
-   "firstTime": 1636554600,
-   "lastTime": 1786109400
-  },
-  {
-   "key": "BAC",
-   "name": "BAC 美國銀行",
-   "category": "us",
-   "pointValue": 1,
-   "sizeUnit": "股",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 1658
-   },
-   "firstTime": 1577975400,
-   "lastTime": 1786109400
+   "lastTime": 1786714200
   },
   {
    "key": "GOOGL",
@@ -940,10 +908,26 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1658
+    "1d": 1663
    },
    "firstTime": 1577975400,
-   "lastTime": 1786109400
+   "lastTime": 1786714200
+  },
+  {
+   "key": "BAC",
+   "name": "BAC 美國銀行",
+   "category": "us",
+   "pointValue": 1,
+   "sizeUnit": "股",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 1663
+   },
+   "firstTime": 1577975400,
+   "lastTime": 1786714200
   },
   {
    "key": "AMD",
@@ -956,42 +940,10 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1658
+    "1d": 1663
    },
    "firstTime": 1577975400,
-   "lastTime": 1786109400
-  },
-  {
-   "key": "VZ",
-   "name": "VZ 威瑞森",
-   "category": "us",
-   "pointValue": 1,
-   "sizeUnit": "股",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 1658
-   },
-   "firstTime": 1577975400,
-   "lastTime": 1786109400
-  },
-  {
-   "key": "LCID",
-   "name": "LCID Lucid",
-   "category": "us",
-   "pointValue": 1,
-   "sizeUnit": "股",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 1478
-   },
-   "firstTime": 1600435800,
-   "lastTime": 1786109400
+   "lastTime": 1786714200
   },
   {
    "key": "NIO",
@@ -1004,10 +956,58 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1658
+    "1d": 1663
    },
    "firstTime": 1577975400,
-   "lastTime": 1786109400
+   "lastTime": 1786714200
+  },
+  {
+   "key": "VZ",
+   "name": "VZ 威瑞森",
+   "category": "us",
+   "pointValue": 1,
+   "sizeUnit": "股",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 1663
+   },
+   "firstTime": 1577975400,
+   "lastTime": 1786714200
+  },
+  {
+   "key": "RIVN",
+   "name": "RIVN Rivian",
+   "category": "us",
+   "pointValue": 1,
+   "sizeUnit": "股",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 1194
+   },
+   "firstTime": 1636554600,
+   "lastTime": 1786714200
+  },
+  {
+   "key": "RIOT",
+   "name": "RIOT Riot",
+   "category": "us",
+   "pointValue": 1,
+   "sizeUnit": "股",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 1663
+   },
+   "firstTime": 1577975400,
+   "lastTime": 1786714200
   },
   {
    "key": "META",
@@ -1020,10 +1020,10 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1658
+    "1d": 1663
    },
    "firstTime": 1577975400,
-   "lastTime": 1786109400
+   "lastTime": 1786714200
   },
   {
    "key": "3481TW",
@@ -1036,42 +1036,10 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1602
+    "1d": 1608
    },
    "firstTime": 1577926800,
-   "lastTime": 1786323600
-  },
-  {
-   "key": "00632RTW",
-   "name": "00632R 元大台灣50反1",
-   "category": "tw",
-   "pointValue": 0.03225806451612903,
-   "sizeUnit": "股",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 1603
-   },
-   "firstTime": 1577926800,
-   "lastTime": 1786323600
-  },
-  {
-   "key": "2409TW",
-   "name": "2409 友達",
-   "category": "tw",
-   "pointValue": 0.03225806451612903,
-   "sizeUnit": "股",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 1602
-   },
-   "firstTime": 1577926800,
-   "lastTime": 1786323600
+   "lastTime": 1787014800
   },
   {
    "key": "6770TW",
@@ -1084,10 +1052,42 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1374
+    "1d": 1380
    },
    "firstTime": 1607475600,
-   "lastTime": 1786323600
+   "lastTime": 1787014800
+  },
+  {
+   "key": "00632RTW",
+   "name": "00632R 元大台灣50反1",
+   "category": "tw",
+   "pointValue": 0.03225806451612903,
+   "sizeUnit": "股",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 1609
+   },
+   "firstTime": 1577926800,
+   "lastTime": 1787014800
+  },
+  {
+   "key": "2409TW",
+   "name": "2409 友達",
+   "category": "tw",
+   "pointValue": 0.03225806451612903,
+   "sizeUnit": "股",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 1608
+   },
+   "firstTime": 1577926800,
+   "lastTime": 1787014800
   },
   {
    "key": "2303TW",
@@ -1100,10 +1100,10 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1602
+    "1d": 1608
    },
    "firstTime": 1577926800,
-   "lastTime": 1786323600
+   "lastTime": 1787014800
   },
   {
    "key": "0050TW",
@@ -1116,10 +1116,10 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1603
+    "1d": 1609
    },
    "firstTime": 1577926800,
-   "lastTime": 1786323600
+   "lastTime": 1787014800
   },
   {
    "key": "2344TW",
@@ -1132,26 +1132,10 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1602
+    "1d": 1608
    },
    "firstTime": 1577926800,
-   "lastTime": 1786323600
-  },
-  {
-   "key": "1303TW",
-   "name": "1303 南亞",
-   "category": "tw",
-   "pointValue": 0.03225806451612903,
-   "sizeUnit": "股",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 1602
-   },
-   "firstTime": 1577926800,
-   "lastTime": 1786323600
+   "lastTime": 1787014800
   },
   {
    "key": "3231TW",
@@ -1164,14 +1148,14 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1602
+    "1d": 1608
    },
    "firstTime": 1577926800,
-   "lastTime": 1786323600
+   "lastTime": 1787014800
   },
   {
-   "key": "2408TW",
-   "name": "2408 南亞科",
+   "key": "1303TW",
+   "name": "1303 南亞",
    "category": "tw",
    "pointValue": 0.03225806451612903,
    "sizeUnit": "股",
@@ -1180,90 +1164,10 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1602
+    "1d": 1608
    },
    "firstTime": 1577926800,
-   "lastTime": 1786323600
-  },
-  {
-   "key": "2337TW",
-   "name": "2337 旺宏",
-   "category": "tw",
-   "pointValue": 0.03225806451612903,
-   "sizeUnit": "股",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 1602
-   },
-   "firstTime": 1577926800,
-   "lastTime": 1786323600
-  },
-  {
-   "key": "0056TW",
-   "name": "0056 元大高股息",
-   "category": "tw",
-   "pointValue": 0.03225806451612903,
-   "sizeUnit": "股",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 1603
-   },
-   "firstTime": 1577926800,
-   "lastTime": 1786323600
-  },
-  {
-   "key": "00919TW",
-   "name": "00919 群益台灣精選高息",
-   "category": "tw",
-   "pointValue": 0.03225806451612903,
-   "sizeUnit": "股",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 926
-   },
-   "firstTime": 1665622800,
-   "lastTime": 1786323600
-  },
-  {
-   "key": "1301TW",
-   "name": "1301 台塑",
-   "category": "tw",
-   "pointValue": 0.03225806451612903,
-   "sizeUnit": "股",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 1602
-   },
-   "firstTime": 1577926800,
-   "lastTime": 1786323600
-  },
-  {
-   "key": "2317TW",
-   "name": "2317 鴻海",
-   "category": "tw",
-   "pointValue": 0.03225806451612903,
-   "sizeUnit": "股",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 1602
-   },
-   "firstTime": 1577926800,
-   "lastTime": 1786323600
+   "lastTime": 1787014800
   },
   {
    "key": "2324TW",
@@ -1276,14 +1180,14 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1602
+    "1d": 1608
    },
    "firstTime": 1577926800,
-   "lastTime": 1786323600
+   "lastTime": 1787014800
   },
   {
-   "key": "2883TW",
-   "name": "2883 開發金",
+   "key": "2408TW",
+   "name": "2408 南亞科",
    "category": "tw",
    "pointValue": 0.03225806451612903,
    "sizeUnit": "股",
@@ -1292,14 +1196,14 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1602
+    "1d": 1608
    },
    "firstTime": 1577926800,
-   "lastTime": 1786323600
+   "lastTime": 1787014800
   },
   {
-   "key": "2891TW",
-   "name": "2891 中信金",
+   "key": "2337TW",
+   "name": "2337 旺宏",
    "category": "tw",
    "pointValue": 0.03225806451612903,
    "sizeUnit": "股",
@@ -1308,14 +1212,14 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1602
+    "1d": 1608
    },
    "firstTime": 1577926800,
-   "lastTime": 1786323600
+   "lastTime": 1787014800
   },
   {
-   "key": "2618TW",
-   "name": "2618 長榮航",
+   "key": "00919TW",
+   "name": "00919 群益台灣精選高息",
    "category": "tw",
    "pointValue": 0.03225806451612903,
    "sizeUnit": "股",
@@ -1324,14 +1228,14 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1602
+    "1d": 932
    },
-   "firstTime": 1577926800,
-   "lastTime": 1786323600
+   "firstTime": 1665622800,
+   "lastTime": 1787014800
   },
   {
-   "key": "2610TW",
-   "name": "2610 華航",
+   "key": "2317TW",
+   "name": "2317 鴻海",
    "category": "tw",
    "pointValue": 0.03225806451612903,
    "sizeUnit": "股",
@@ -1340,10 +1244,26 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1602
+    "1d": 1608
    },
    "firstTime": 1577926800,
-   "lastTime": 1786323600
+   "lastTime": 1787014800
+  },
+  {
+   "key": "0056TW",
+   "name": "0056 元大高股息",
+   "category": "tw",
+   "pointValue": 0.03225806451612903,
+   "sizeUnit": "股",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 1608
+   },
+   "firstTime": 1577926800,
+   "lastTime": 1787014800
   },
   {
    "key": "00878TW",
@@ -1356,14 +1276,14 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1480
+    "1d": 1485
    },
    "firstTime": 1594342800,
-   "lastTime": 1786323600
+   "lastTime": 1787014800
   },
   {
-   "key": "2884TW",
-   "name": "2884 玉山金",
+   "key": "2883TW",
+   "name": "2883 開發金",
    "category": "tw",
    "pointValue": 0.03225806451612903,
    "sizeUnit": "股",
@@ -1372,26 +1292,10 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1602
+    "1d": 1608
    },
    "firstTime": 1577926800,
-   "lastTime": 1786323600
-  },
-  {
-   "key": "2002TW",
-   "name": "2002 中鋼",
-   "category": "tw",
-   "pointValue": 0.03225806451612903,
-   "sizeUnit": "股",
-   "sizeDecimals": 0,
-   "tfs": [
-    "1d"
-   ],
-   "barCounts": {
-    "1d": 1602
-   },
-   "firstTime": 1577926800,
-   "lastTime": 1786323600
+   "lastTime": 1787014800
   },
   {
    "key": "2892TW",
@@ -1404,14 +1308,14 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1602
+    "1d": 1608
    },
    "firstTime": 1577926800,
-   "lastTime": 1786323600
+   "lastTime": 1787014800
   },
   {
-   "key": "00929TW",
-   "name": "00929 復華台灣科技優息",
+   "key": "2002TW",
+   "name": "2002 中鋼",
    "category": "tw",
    "pointValue": 0.03225806451612903,
    "sizeUnit": "股",
@@ -1420,14 +1324,14 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 776
+    "1d": 1608
    },
-   "firstTime": 1685581200,
-   "lastTime": 1786323600
+   "firstTime": 1577926800,
+   "lastTime": 1787014800
   },
   {
-   "key": "2330TW",
-   "name": "2330 台積電",
+   "key": "2610TW",
+   "name": "2610 華航",
    "category": "tw",
    "pointValue": 0.03225806451612903,
    "sizeUnit": "股",
@@ -1436,14 +1340,14 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1602
+    "1d": 1608
    },
    "firstTime": 1577926800,
-   "lastTime": 1786323600
+   "lastTime": 1787014800
   },
   {
-   "key": "2356TW",
-   "name": "2356 英業達",
+   "key": "2884TW",
+   "name": "2884 玉山金",
    "category": "tw",
    "pointValue": 0.03225806451612903,
    "sizeUnit": "股",
@@ -1452,10 +1356,42 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1602
+    "1d": 1608
    },
    "firstTime": 1577926800,
-   "lastTime": 1786323600
+   "lastTime": 1787014800
+  },
+  {
+   "key": "2618TW",
+   "name": "2618 長榮航",
+   "category": "tw",
+   "pointValue": 0.03225806451612903,
+   "sizeUnit": "股",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 1608
+   },
+   "firstTime": 1577926800,
+   "lastTime": 1787014800
+  },
+  {
+   "key": "1301TW",
+   "name": "1301 台塑",
+   "category": "tw",
+   "pointValue": 0.03225806451612903,
+   "sizeUnit": "股",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 1608
+   },
+   "firstTime": 1577926800,
+   "lastTime": 1787014800
   },
   {
    "key": "2886TW",
@@ -1468,14 +1404,14 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1602
+    "1d": 1608
    },
    "firstTime": 1577926800,
-   "lastTime": 1786323600
+   "lastTime": 1787014800
   },
   {
-   "key": "2353TW",
-   "name": "2353 宏碁",
+   "key": "2356TW",
+   "name": "2356 英業達",
    "category": "tw",
    "pointValue": 0.03225806451612903,
    "sizeUnit": "股",
@@ -1484,10 +1420,74 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1602
+    "1d": 1608
    },
    "firstTime": 1577926800,
-   "lastTime": 1786323600
+   "lastTime": 1787014800
+  },
+  {
+   "key": "2891TW",
+   "name": "2891 中信金",
+   "category": "tw",
+   "pointValue": 0.03225806451612903,
+   "sizeUnit": "股",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 1608
+   },
+   "firstTime": 1577926800,
+   "lastTime": 1787014800
+  },
+  {
+   "key": "00929TW",
+   "name": "00929 復華台灣科技優息",
+   "category": "tw",
+   "pointValue": 0.03225806451612903,
+   "sizeUnit": "股",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 781
+   },
+   "firstTime": 1685581200,
+   "lastTime": 1787014800
+  },
+  {
+   "key": "1605TW",
+   "name": "1605 華新",
+   "category": "tw",
+   "pointValue": 0.03225806451612903,
+   "sizeUnit": "股",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 1608
+   },
+   "firstTime": 1577926800,
+   "lastTime": 1787014800
+  },
+  {
+   "key": "2330TW",
+   "name": "2330 台積電",
+   "category": "tw",
+   "pointValue": 0.03225806451612903,
+   "sizeUnit": "股",
+   "sizeDecimals": 0,
+   "tfs": [
+    "1d"
+   ],
+   "barCounts": {
+    "1d": 1608
+   },
+   "firstTime": 1577926800,
+   "lastTime": 1787014800
   },
   {
    "key": "2382TW",
@@ -1500,10 +1500,10 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1602
+    "1d": 1608
    },
    "firstTime": 1577926800,
-   "lastTime": 1786323600
+   "lastTime": 1787014800
   },
   {
    "key": "2454TW",
@@ -1516,10 +1516,10 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1602
+    "1d": 1608
    },
    "firstTime": 1577926800,
-   "lastTime": 1786323600
+   "lastTime": 1787014800
   },
   {
    "key": "2603TW",
@@ -1532,10 +1532,10 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1602
+    "1d": 1608
    },
    "firstTime": 1577926800,
-   "lastTime": 1786323600
+   "lastTime": 1787014800
   },
   {
    "key": "2609TW",
@@ -1548,10 +1548,10 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1602
+    "1d": 1608
    },
    "firstTime": 1577926800,
-   "lastTime": 1786323600
+   "lastTime": 1787014800
   },
   {
    "key": "3008TW",
@@ -1564,10 +1564,10 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1602
+    "1d": 1608
    },
    "firstTime": 1577926800,
-   "lastTime": 1786323600
+   "lastTime": 1787014800
   },
   {
    "key": "2412TW",
@@ -1580,10 +1580,10 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1602
+    "1d": 1608
    },
    "firstTime": 1577926800,
-   "lastTime": 1786323600
+   "lastTime": 1787014800
   },
   {
    "key": "2882TW",
@@ -1596,10 +1596,10 @@
     "1d"
    ],
    "barCounts": {
-    "1d": 1602
+    "1d": 1608
    },
    "firstTime": 1577926800,
-   "lastTime": 1786323600
+   "lastTime": 1787014800
   }
  ]
 }

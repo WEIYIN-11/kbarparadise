@@ -59,7 +59,13 @@ const CRYPTO_EXCLUDE = new Set([
   'RLUSD', 'PYUSD', 'GUSD', 'USTC', 'USDD',
   'EUR', 'EURI', 'AEUR', 'GBP', 'TRY', 'BRL', 'JPY', 'ARS', 'COP', 'MXN',
   'WBTC', 'WBETH', 'BNSOL', 'CBBTC', 'STETH', 'WSTETH', 'SOLV',
+  'XAUT', 'PAXG', 'U',                       // 黃金/美元錨定代幣（價格不自由浮動，不是練習標的）
+  'SNDKB', 'SPCXB', 'SKHYB',                 // Binance 代幣化股票（是股票不是加密貨幣）
 ]);
+// 上架未滿 N 個月不進池：擋掉新上架垃圾幣與代幣化股票（K 棒也不夠盲測用）
+const CRYPTO_MIN_AGE_MONTHS = 14;
+// 近 30 天價格區間小於 3% 視為錨定資產（穩定幣/金銀代幣），不進池
+const CRYPTO_PEG_RANGE = 0.03;
 const CRYPTO_NAMES = {
   BTC: '比特幣', ETH: '以太坊', BNB: '幣安幣', SOL: 'Solana', XRP: '瑞波幣', DOGE: '狗狗幣',
   ADA: 'Cardano', TRX: '波場', AVAX: 'Avalanche', LINK: 'Chainlink', DOT: '波卡',
@@ -74,6 +80,8 @@ const CRYPTO_NAMES = {
   ENS: 'ENS', LDO: 'Lido', MKR: 'Maker', ONDO: 'Ondo', STRK: 'Starknet', ZK: 'ZKsync',
   NOT: 'Notcoin', PENGU: 'Pudgy Penguins', TRUMP: 'Trump', FARTCOIN: 'Fartcoin',
   PAXG: '黃金代幣', DOGS: 'Dogs', NEIRO: 'Neiro', ACT: 'Act', PNUT: 'Peanut',
+  ZEC: 'Zcash', ACE: 'Fusionist', BICO: 'Biconomy', KAITO: 'Kaito',
+  HOME: 'DeFi App', NFP: 'NFPrompt', BMT: 'Bubblemaps', TUT: 'Tutorial',
 };
 
 // 美股候選池（排名範圍；ranking 只會從這裡挑）
@@ -129,9 +137,30 @@ async function rankCrypto() {
   const scored = [];
   for (const c of candidates) {
     try {
+      // 上架時間檢查：月 K 根數不足＝新上架（代幣化股票、剛發行的迷因幣都會被擋）
+      const ageRes = await fetch(`https://api.binance.com/api/v3/klines?symbol=${c.symbol}&interval=1M&limit=${CRYPTO_MIN_AGE_MONTHS}`);
+      if (ageRes.ok) {
+        const months = await ageRes.json();
+        if (months.length < CRYPTO_MIN_AGE_MONTHS) {
+          console.log(`  skip ${c.base}：上架未滿 ${CRYPTO_MIN_AGE_MONTHS} 個月`);
+          await sleep(80);
+          continue;
+        }
+      }
+      await sleep(80);
       const r = await fetch(`https://api.binance.com/api/v3/klines?symbol=${c.symbol}&interval=1d&limit=30`);
       if (!r.ok) continue;
       const rows = await r.json();
+      // 錨定資產檢查：30 天收盤價幾乎不動就跳過（漏網的穩定幣/商品代幣）
+      const closes = rows.map(k => +k[4]).filter(v => v > 0);
+      if (closes.length) {
+        const hi = Math.max(...closes), lo = Math.min(...closes);
+        if ((hi - lo) / ((hi + lo) / 2) < CRYPTO_PEG_RANGE) {
+          console.log(`  skip ${c.base}：30 天價格區間 <${CRYPTO_PEG_RANGE * 100}%，疑為錨定資產`);
+          await sleep(80);
+          continue;
+        }
+      }
       const vol30 = rows.reduce((s, k) => s + (+k[7] || 0), 0); // k[7] = quote asset volume
       scored.push({ ...c, vol30 });
     } catch { /* skip */ }

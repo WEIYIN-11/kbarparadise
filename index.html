@@ -668,6 +668,8 @@ input, textarea { user-select: text; }
 }
 .btn-close-pos { background: var(--bg-4); color: var(--text); }
 .btn-close-pos:hover { background: var(--danger); color: #fff; }
+.btn-add-line { background: var(--bg-4); color: var(--text-2); }
+.btn-add-line:hover { background: var(--accent); color: #fff; }
 .btn-edit-sl { background: var(--bg-4); color: var(--text-2); }
 
 .empty {
@@ -1342,12 +1344,12 @@ input, textarea { user-select: text; }
 
           <div class="field-row">
             <div class="field">
-              <label>停損價</label>
-              <input type="number" id="order-sl" step="0.01" placeholder="—">
+              <label>停損價（選填）</label>
+              <input type="number" id="order-sl" step="0.01" placeholder="選填，可進場後補">
             </div>
             <div class="field">
-              <label>停利價</label>
-              <input type="number" id="order-tp" step="0.01" placeholder="—">
+              <label>停利價（選填）</label>
+              <input type="number" id="order-tp" step="0.01" placeholder="選填，可進場後補">
             </div>
           </div>
 
@@ -2883,15 +2885,22 @@ function drawOpenPositionZones() {
   for (const p of state.positions) {
     if (p.status !== 'open') continue;
     if (p.symbol !== state.symbol || p.timeframe !== state.timeframe || !inScope(p)) continue;
-    const yE = priceToY(p.entryPrice), yT = priceToY(p.takeProfit), yS = priceToY(p.stopLoss);
-    if (yE == null || yT == null || yS == null) continue;
+    // 停損/停利選填：只畫有設定那一側的色帶
+    const yE = priceToY(p.entryPrice);
+    if (yE == null) continue;
+    const yT = p.takeProfit != null ? priceToY(p.takeProfit) : null;
+    const yS = p.stopLoss != null ? priceToY(p.stopLoss) : null;
     let x0 = timeToX(p.entryTime);
     if (x0 == null || x0 < 0) x0 = 0;
     drawCtx.save();
-    drawCtx.fillStyle = 'rgba(8,153,129,0.10)';
-    drawCtx.fillRect(x0, Math.min(yE, yT), w - x0, Math.abs(yT - yE));
-    drawCtx.fillStyle = 'rgba(242,54,69,0.10)';
-    drawCtx.fillRect(x0, Math.min(yE, yS), w - x0, Math.abs(yS - yE));
+    if (yT != null) {
+      drawCtx.fillStyle = 'rgba(8,153,129,0.10)';
+      drawCtx.fillRect(x0, Math.min(yE, yT), w - x0, Math.abs(yT - yE));
+    }
+    if (yS != null) {
+      drawCtx.fillStyle = 'rgba(242,54,69,0.10)';
+      drawCtx.fillRect(x0, Math.min(yE, yS), w - x0, Math.abs(yS - yE));
+    }
     drawCtx.restore();
   }
 }
@@ -3656,34 +3665,43 @@ function redrawPositionLines() {
   posLines.forEach(l => { try { candleSeries.removePriceLine(l); } catch {} });
   posLines = [];
   posLineMap.clear();
-  // Open positions for current symbol/tf (盲測 scope 過濾)
+  // Open positions for current symbol/tf (盲測 scope 過濾；含未成交掛單)
   const open = state.positions.filter(p =>
-    p.status === 'open' && p.symbol === state.symbol && p.timeframe === state.timeframe && inScope(p));
+    (p.status === 'open' || p.status === 'pending') && p.symbol === state.symbol && p.timeframe === state.timeframe && inScope(p));
   open.forEach(p => {
+    const pending = p.status === 'pending';
     const color = p.side === 'long' ? '#089981' : '#f23645';
     const labelSide = p.side === 'long' ? 'L' : 'S';
     const entryLine = candleSeries.createPriceLine({
       price: p.entryPrice,
-      color,
+      color: pending ? '#b2b5be' : color,
       lineWidth: 1,
-      lineStyle: 0,
-      title: `${labelSide} 進場 ${fmtPrice(p.entryPrice)}`,
+      lineStyle: pending ? 2 : 0,
+      title: pending ? `⏳ ${labelSide} 掛單 ${fmtPrice(p.entryPrice)}` : `${labelSide} 進場 ${fmtPrice(p.entryPrice)}`,
     });
-    const slLine = candleSeries.createPriceLine({
-      price: p.stopLoss,
-      color: '#f77c80',
-      lineWidth: 2,
-      lineStyle: 2,
-      title: slLineTitle(p, p.stopLoss, false),
-    });
-    const tpLine = candleSeries.createPriceLine({
-      price: p.takeProfit,
-      color: '#26a69a',
-      lineWidth: 2,
-      lineStyle: 2,
-      title: tpLineTitle(p, p.takeProfit, false),
-    });
-    posLines.push(entryLine, slLine, tpLine);
+    // 停損/停利選填：只畫有設定的線
+    let slLine = null, tpLine = null;
+    if (p.stopLoss != null) {
+      slLine = candleSeries.createPriceLine({
+        price: p.stopLoss,
+        color: '#f77c80',
+        lineWidth: 2,
+        lineStyle: 2,
+        title: slLineTitle(p, p.stopLoss, false),
+      });
+    }
+    if (p.takeProfit != null) {
+      tpLine = candleSeries.createPriceLine({
+        price: p.takeProfit,
+        color: '#26a69a',
+        lineWidth: 2,
+        lineStyle: 2,
+        title: tpLineTitle(p, p.takeProfit, false),
+      });
+    }
+    posLines.push(entryLine);
+    if (slLine) posLines.push(slLine);
+    if (tpLine) posLines.push(tpLine);
     posLineMap.set(p.id, { entry: entryLine, sl: slLine, tp: tpLine });
   });
 }
@@ -3699,13 +3717,17 @@ function findDraggableLineAtY(y) {
   for (const p of state.positions) {
     if (p.status !== 'open') continue;
     if (p.symbol !== state.symbol || p.timeframe !== state.timeframe || !inScope(p)) continue;
-    const slY = candleSeries.priceToCoordinate(p.stopLoss);
-    const tpY = candleSeries.priceToCoordinate(p.takeProfit);
-    if (slY != null && Math.abs(y - slY) <= DRAG_HIT_PX) {
-      return { pos: p, type: 'sl' };
+    if (p.stopLoss != null) {
+      const slY = candleSeries.priceToCoordinate(p.stopLoss);
+      if (slY != null && Math.abs(y - slY) <= DRAG_HIT_PX) {
+        return { pos: p, type: 'sl' };
+      }
     }
-    if (tpY != null && Math.abs(y - tpY) <= DRAG_HIT_PX) {
-      return { pos: p, type: 'tp' };
+    if (p.takeProfit != null) {
+      const tpY = candleSeries.priceToCoordinate(p.takeProfit);
+      if (tpY != null && Math.abs(y - tpY) <= DRAG_HIT_PX) {
+        return { pos: p, type: 'tp' };
+      }
     }
   }
   return null;
@@ -3761,8 +3783,8 @@ function onDragEnd() {
     // Reset title (remove dragging indicator)
     const lines = posLineMap.get(p.id);
     if (lines) {
-      lines.sl.applyOptions({ title: slLineTitle(p, p.stopLoss, false) });
-      lines.tp.applyOptions({ title: tpLineTitle(p, p.takeProfit, false) });
+      if (lines.sl && p.stopLoss != null) lines.sl.applyOptions({ title: slLineTitle(p, p.stopLoss, false) });
+      if (lines.tp && p.takeProfit != null) lines.tp.applyOptions({ title: tpLineTitle(p, p.takeProfit, false) });
     }
     showToast(`已更新${dragState.type === 'sl' ? '停損' : '停利'} → ${fmtPrice(dragState.type === 'sl' ? p.stopLoss : p.takeProfit)}`, 'success');
   }
@@ -4141,20 +4163,33 @@ function jumpToDate(dateStr) {
 function checkPositionTriggers(newBar) {
   let changed = false;
   for (const p of state.positions) {
-    if (p.status !== 'open') continue;
     if (p.symbol !== state.symbol || p.timeframe !== state.timeframe || !inScope(p)) continue;
+    // 掛單：價格觸及進場價才成交；成交當根不檢查停損/停利（下一根才開始）
+    if (p.status === 'pending') {
+      if (newBar.low <= p.entryPrice && p.entryPrice <= newBar.high) {
+        p.status = 'open';
+        p.entryTime = newBar.time;
+        p.chartTime = newBar.time;
+        saveStorage();
+        showToast(`✓ 掛單成交：${p.side === 'long' ? '多' : '空'}單 @ ${fmtPrice(p.entryPrice)}`, 'success');
+        changed = true;
+      }
+      continue;
+    }
+    if (p.status !== 'open') continue;
     let exitPrice = null, exitReason = null;
+    // 停損/停利可能未設（選填）——只檢查有設的那條
     if (p.side === 'long') {
       // SL fills first if both hit
-      if (newBar.low <= p.stopLoss) {
+      if (p.stopLoss != null && newBar.low <= p.stopLoss) {
         exitPrice = p.stopLoss; exitReason = '達停損';
-      } else if (newBar.high >= p.takeProfit) {
+      } else if (p.takeProfit != null && newBar.high >= p.takeProfit) {
         exitPrice = p.takeProfit; exitReason = '達停利';
       }
     } else {
-      if (newBar.high >= p.stopLoss) {
+      if (p.stopLoss != null && newBar.high >= p.stopLoss) {
         exitPrice = p.stopLoss; exitReason = '達停損';
-      } else if (newBar.low <= p.takeProfit) {
+      } else if (p.takeProfit != null && newBar.low <= p.takeProfit) {
         exitPrice = p.takeProfit; exitReason = '達停利';
       }
     }
@@ -4178,16 +4213,10 @@ function refreshOrderForm() {
   const dp = priceDp(c.close);
   const entryEl = $('order-entry');
   if (!entryEl.dataset.touched) entryEl.value = c.close.toFixed(dp);
-  // Default SL/TP based on a reasonable distance (e.g., 0.5% / 1%)
+  // 停損/停利為選填：不自動帶入（部位工具會填三價；使用者填過的值保留）
   const slEl = $('order-sl'), tpEl = $('order-tp');
-  if (!slEl.dataset.touched) {
-    if (state.orderSide === 'long') slEl.value = (c.close * 0.995).toFixed(dp);
-    else slEl.value = (c.close * 1.005).toFixed(dp);
-  }
-  if (!tpEl.dataset.touched) {
-    if (state.orderSide === 'long') tpEl.value = (c.close * 1.01).toFixed(dp);
-    else tpEl.value = (c.close * 0.99).toFixed(dp);
-  }
+  if (!slEl.dataset.touched) slEl.value = '';
+  if (!tpEl.dataset.touched) tpEl.value = '';
   updateOrderSummary();
 }
 function clearOrderTouched() {
@@ -4203,70 +4232,81 @@ function setOrderSide(side) {
   refreshOrderForm();
 }
 function calcOrderSize(entry, sl, riskPct, balance) {
-  const dist = Math.abs(entry - sl);
-  if (dist <= 0) return { size: 0, riskAmount: 0, dist };
+  // 未設停損時以進場價 1% 當預設風險距離估算部位（單筆風險金額不變）
+  const noSl = !(sl > 0);
+  const dist = noSl ? entry * 0.01 : Math.abs(entry - sl);
+  if (dist <= 0) return { size: 0, riskAmount: 0, dist, noSl };
   const riskAmount = balance * (riskPct / 100);
   const ptValue = getPointValue(state.symbol);
   const size = riskAmount / (dist * ptValue);
-  return { size, riskAmount, dist };
+  return { size, riskAmount, dist, noSl };
 }
 function updateOrderSummary() {
   const entry = +$('order-entry').value;
-  const sl = +$('order-sl').value;
-  const tp = +$('order-tp').value;
+  const sl = +$('order-sl').value || null;
+  const tp = +$('order-tp').value || null;
   const riskPct = +$('order-risk').value;
   const balance = state.settings.balance;
   const side = state.orderSide;
 
   const summary = $('order-summary');
-  if (!entry || !sl || !tp || !riskPct) {
-    summary.innerHTML = '<div class="row"><span>填完欄位後顯示風險摘要</span></div>';
+  if (!entry || !riskPct) {
+    summary.innerHTML = '<div class="row"><span>填進場價與風險 % 後顯示摘要（停損/停利選填）</span></div>';
     $('order-size-hint').textContent = '部位大小將依停損距離自動計算';
     return;
   }
-  // Validate direction
-  if (side === 'long' && (sl >= entry || tp <= entry)) {
-    summary.innerHTML = '<div class="row"><span style="color:var(--warn);">停損須低於進場、停利須高於進場</span></div>';
+  // 方向驗證：只驗有填的欄位
+  if (sl != null && (side === 'long' ? sl >= entry : sl <= entry)) {
+    summary.innerHTML = `<div class="row"><span style="color:var(--warn);">${side === 'long' ? '停損須低於進場價' : '停損須高於進場價'}</span></div>`;
     return;
   }
-  if (side === 'short' && (sl <= entry || tp >= entry)) {
-    summary.innerHTML = '<div class="row"><span style="color:var(--warn);">停損須高於進場、停利須低於進場</span></div>';
+  if (tp != null && (side === 'long' ? tp <= entry : tp >= entry)) {
+    summary.innerHTML = `<div class="row"><span style="color:var(--warn);">${side === 'long' ? '停利須高於進場價' : '停利須低於進場價'}</span></div>`;
     return;
   }
-  const { size, riskAmount, dist } = calcOrderSize(entry, sl, riskPct, balance);
+  const { size, riskAmount, dist, noSl } = calcOrderSize(entry, sl, riskPct, balance);
   const ptValue = getPointValue(state.symbol);
-  const rewardDist = Math.abs(tp - entry);
-  const rewardAmt = rewardDist * ptValue * size;
-  const rr = rewardDist / dist;
 
   const sInfo = symInfo(state.symbol);
-  $('order-size-hint').textContent = `部位大小 ≈ ${size.toFixed(sInfo.sizeDecimals)} ${sInfo.sizeUnit}`;
-  summary.innerHTML = `
-    <div class="row"><span>停損距離</span><span class="v">${fmtPrice(dist)} 點</span></div>
-    <div class="row risk"><span>單筆風險</span><span class="v">${fmtMoney(riskAmount)}</span></div>
-    <div class="row reward"><span>停利目標</span><span class="v">${fmtMoney(rewardAmt)}</span></div>
-    <div class="row"><span>盈虧比 R:R</span><span class="v">1:${rr.toFixed(2)}</span></div>
-  `;
+  $('order-size-hint').textContent = `部位大小 ≈ ${size.toFixed(sInfo.sizeDecimals)} ${sInfo.sizeUnit}`
+    + (noSl ? '（未設停損，以進場價 1% 估算）' : '');
+  const rows = [];
+  rows.push(noSl
+    ? '<div class="row"><span>停損</span><span class="v">未設，可進場後在圖上補</span></div>'
+    : `<div class="row"><span>停損距離</span><span class="v">${fmtPrice(dist)} 點</span></div>`);
+  rows.push(`<div class="row risk"><span>單筆風險</span><span class="v">${fmtMoney(riskAmount)}</span></div>`);
+  if (tp != null) {
+    const rewardDist = Math.abs(tp - entry);
+    rows.push(`<div class="row reward"><span>停利目標</span><span class="v">${fmtMoney(rewardDist * ptValue * size)}</span></div>`);
+    rows.push(`<div class="row"><span>盈虧比 R:R</span><span class="v">1:${(rewardDist / dist).toFixed(2)}</span></div>`);
+  } else {
+    rows.push('<div class="row"><span>停利</span><span class="v">未設，可進場後在圖上補</span></div>');
+  }
+  summary.innerHTML = rows.join('');
 }
 
 function submitOrder() {
   const c = state.candles[state.cursorIndex];
   if (!c) { showToast('請先載入資料', 'error'); return; }
   const entry = +$('order-entry').value;
-  const sl = +$('order-sl').value;
-  const tp = +$('order-tp').value;
+  const sl = +$('order-sl').value || null;
+  const tp = +$('order-tp').value || null;
   const riskPct = +$('order-risk').value;
   const strategy = $('order-strategy').value.trim();
   const reason = $('order-reason').value.trim();
   const side = state.orderSide;
-  if (!entry || !sl || !tp || !riskPct) { showToast('請填寫進場/停損/停利/風險', 'error'); return; }
-  if (side === 'long' && (sl >= entry || tp <= entry)) { showToast('多單方向錯誤', 'error'); return; }
-  if (side === 'short' && (sl <= entry || tp >= entry)) { showToast('空單方向錯誤', 'error'); return; }
+  if (!entry || !riskPct) { showToast('請填寫進場價與風險 %', 'error'); return; }
+  // 停損/停利選填：有填才驗方向；未設停損以進場價 1% 估算部位，之後可在圖上補設
+  if (sl != null && (side === 'long' ? sl >= entry : sl <= entry)) { showToast(side === 'long' ? '停損須低於進場價' : '停損須高於進場價', 'error'); return; }
+  if (tp != null && (side === 'long' ? tp <= entry : tp >= entry)) { showToast(side === 'long' ? '停利須高於進場價' : '停利須低於進場價', 'error'); return; }
   // 策略標籤與進場理由皆為選填（教練建議填，但不擋單）
 
   const { size, riskAmount } = calcOrderSize(entry, sl, riskPct, state.settings.balance);
   if (size <= 0) { showToast('部位計算失敗', 'error'); return; }
 
+  // 掛單判定：進場價不在當根 K 棒範圍內 → 掛單（pending），等價格觸及才成交
+  // 成交前不會觸發停損/停利，避免「沒成交卻達停利」的幽靈獲利
+  const filled = entry <= c.high && entry >= c.low;
   const pos = {
     id: uid(),
     symbol: state.symbol,
@@ -4281,7 +4321,7 @@ function submitOrder() {
     riskAmount,
     strategyTag: strategy || '—',
     entryReason: reason || '—',
-    status: 'open',
+    status: filled ? 'open' : 'pending',
     createdAt: Date.now(),
     chartTime: c.time,
     pv: getPointValue(state.symbol),          // 點值快照（盲測正規化後仍算出正確金額）
@@ -4302,15 +4342,17 @@ function submitOrder() {
 
   // Switch to positions tab
   switchSidePane('positions');
-  showToast(`✓ 已建立${side === 'long' ? '多' : '空'}單 @ ${entry}`, 'success');
+  showToast(filled
+    ? `✓ 已建立${side === 'long' ? '多' : '空'}單 @ ${entry}`
+    : `⏳ 已掛${side === 'long' ? '多' : '空'}單 @ ${entry}，價格觸及才會成交`, 'success');
 }
 
 // ---------- Position management ----------
 function renderPositions() {
   const cont = $('positions-list');
   const c = state.candles[state.cursorIndex];
-  // 盲測中只顯示本輪盲測部位；平時只顯示一般部位
-  const open = state.positions.filter(p => p.status === 'open' && inScope(p));
+  // 盲測中只顯示本輪盲測部位；平時只顯示一般部位（含未成交掛單）
+  const open = state.positions.filter(p => (p.status === 'open' || p.status === 'pending') && inScope(p));
   $('badge-pos').style.display = open.length > 0 ? 'inline' : 'none';
   $('pos-count').textContent = open.length;
 
@@ -4321,13 +4363,13 @@ function renderPositions() {
     return;
   }
   cont.innerHTML = open.map(p => {
+    const pending = p.status === 'pending';
     const isCurrent = p.symbol === state.symbol && p.timeframe === state.timeframe;
     const cur = isCurrent && c ? c.close : p.entryPrice;
     const dir = p.side === 'long' ? 1 : -1;
-    const pnlPts = (cur - p.entryPrice) * dir;
+    const pnlPts = pending ? 0 : (cur - p.entryPrice) * dir;
     const pnl = pnlPts * posPV(p) * p.size;
-    const dist = Math.abs(p.entryPrice - p.stopLoss);
-    const rMul = dist > 0 ? (pnlPts / dist) * (p.side === 'long' ? 1 : 1) : 0;
+    const rMul = p.riskAmount > 0 ? pnl / p.riskAmount : 0;
     const pnlClass = pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
     return `
       <div class="pos-card ${p.side}">
@@ -4337,21 +4379,65 @@ function renderPositions() {
             <span style="color:var(--text);font-weight:600;margin-left:6px;">${dispSym(p)}</span>
             <span style="color:var(--text-3);margin-left:4px;">${p.timeframe}</span>
           </div>
-          <div class="pos-pnl ${pnlClass}">${fmtMoney(pnl)} <span style="font-size:10px;">${fmtR(rMul)}</span></div>
+          ${pending
+            ? '<div class="pos-pnl" style="color:var(--text-3);">⏳ 掛單中</div>'
+            : `<div class="pos-pnl ${pnlClass}">${fmtMoney(pnl)} <span style="font-size:10px;">${fmtR(rMul)}</span></div>`}
         </div>
-        <div class="pos-row"><span>進場</span><span class="v">${fmtPrice(p.entryPrice)} · ${isMasked(p) ? '❓' : fmtDateTime(p.entryTime, p.timeframe)}</span></div>
-        <div class="pos-row"><span>停損 / 停利</span><span class="v">${fmtPrice(p.stopLoss)} / ${fmtPrice(p.takeProfit)}</span></div>
+        <div class="pos-row"><span>${pending ? '掛單價' : '進場'}</span><span class="v">${fmtPrice(p.entryPrice)} · ${isMasked(p) ? '❓' : fmtDateTime(p.entryTime, p.timeframe)}</span></div>
+        <div class="pos-row"><span>停損 / 停利</span><span class="v">${p.stopLoss != null ? fmtPrice(p.stopLoss) : '—'} / ${p.takeProfit != null ? fmtPrice(p.takeProfit) : '—'}</span></div>
         <div class="pos-row"><span>部位</span><span class="v">${sizeStr(p)} · 風險 ${fmtMoney(p.riskAmount)}</span></div>
         <div class="pos-row"><span>策略</span><span class="v">${escHtml(p.strategyTag)}</span></div>
-        ${isCurrent ? `<div class="pos-actions">
+        ${isCurrent ? (pending ? `<div class="pos-actions">
+          <button class="btn-close-pos" data-cancel-pos="${p.id}">取消掛單</button>
+        </div>` : `<div class="pos-actions">
+          ${p.stopLoss == null ? `<button class="btn-add-line" data-add-sl="${p.id}">＋停損</button>` : ''}
+          ${p.takeProfit == null ? `<button class="btn-add-line" data-add-tp="${p.id}">＋停利</button>` : ''}
           <button class="btn-close-pos" data-close-pos="${p.id}">市價平倉</button>
-        </div>` : `<div class="field-hint" style="margin-top:6px;">切換到 ${dispSym(p)} ${p.timeframe} 才能管理</div>`}
+        </div>`) : `<div class="field-hint" style="margin-top:6px;">切換到 ${dispSym(p)} ${p.timeframe} 才能管理</div>`}
       </div>
     `;
   }).join('');
   cont.querySelectorAll('[data-close-pos]').forEach(b =>
     b.addEventListener('click', () => openCloseModal(b.dataset.closePos))
   );
+  cont.querySelectorAll('[data-add-sl]').forEach(b =>
+    b.addEventListener('click', () => addPosStop(b.dataset.addSl, 'sl'))
+  );
+  cont.querySelectorAll('[data-add-tp]').forEach(b =>
+    b.addEventListener('click', () => addPosStop(b.dataset.addTp, 'tp'))
+  );
+  cont.querySelectorAll('[data-cancel-pos]').forEach(b =>
+    b.addEventListener('click', () => cancelPendingOrder(b.dataset.cancelPos))
+  );
+}
+
+// 取消未成交掛單（不留任何紀錄）
+function cancelPendingOrder(posId) {
+  const p = state.positions.find(x => x.id === posId && x.status === 'pending');
+  if (!p) return;
+  state.positions = state.positions.filter(x => x.id !== posId);
+  saveStorage();
+  renderPositions();
+  redrawPositionLines();
+  updateHotStats();
+  showToast('已取消掛單', 'success');
+}
+
+// 進場後補設停損/停利：先放在現價 ±1%，再讓使用者到圖上拖曳調整
+function addPosStop(posId, type) {
+  const p = state.positions.find(x => x.id === posId);
+  const c = state.candles[state.cursorIndex];
+  if (!p || !c) return;
+  const dp = priceDp(c.close);
+  const dir = p.side === 'long' ? 1 : -1;
+  const off = c.close * 0.01;
+  const price = type === 'sl' ? c.close - dir * off : c.close + dir * off;
+  if (type === 'sl') p.stopLoss = +price.toFixed(dp);
+  else p.takeProfit = +price.toFixed(dp);
+  saveStorage();
+  redrawPositionLines();
+  renderPositions();
+  showToast(`已加上${type === 'sl' ? '停損' : '停利'}線（現價 ±1%），可在圖表上拖曳調整`, 'success');
 }
 
 let _closeTargetId = null;
@@ -4400,10 +4486,11 @@ function closePosition(p, exitPrice, exitReason, exitTime, exitNote) {
   const dir = p.side === 'long' ? 1 : -1;
   const pnlPts = (exitPrice - p.entryPrice) * dir;
   const pnl = pnlPts * posPV(p) * p.size;
-  const dist = Math.abs(p.entryPrice - p.stopLoss);
   p.pnl = pnl;
   p.pnlPts = pnlPts;
-  p.rMultiple = dist > 0 ? pnlPts / dist : 0;
+  // R = 盈虧 ÷ 進場時風險金額（停損未設或事後拖動都算得出正確 R）
+  const dist = p.stopLoss != null ? Math.abs(p.entryPrice - p.stopLoss) : 0;
+  p.rMultiple = p.riskAmount > 0 ? pnl / p.riskAmount : (dist > 0 ? pnlPts / dist : 0);
   p.holdBars = null; // computed if needed
   // move from positions to trades
   state.positions = state.positions.filter(x => x.id !== p.id);
@@ -4449,7 +4536,7 @@ function openTradeModal(id) {
       <hr style="border-color:var(--line);margin:10px 0;">
       <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:12px;">
         <span style="color:var(--text-3);">進場</span><span>${fmtPrice(t.entryPrice)}</span>
-        <span style="color:var(--text-3);">停損 / 停利</span><span>${fmtPrice(t.stopLoss)} / ${fmtPrice(t.takeProfit)}</span>
+        <span style="color:var(--text-3);">停損 / 停利</span><span>${t.stopLoss != null ? fmtPrice(t.stopLoss) : '—'} / ${t.takeProfit != null ? fmtPrice(t.takeProfit) : '—'}</span>
         <span style="color:var(--text-3);">出場</span><span>${fmtPrice(t.exitPrice)}</span>
         <span style="color:var(--text-3);">部位</span><span>${sizeStr(t)}</span>
         <span style="color:var(--text-3);">盈虧</span><span style="color:${t.pnl >= 0 ? 'var(--accent-2)' : 'var(--danger-2)'};font-weight:600;">${fmtMoney(t.pnl)} (${fmtR(t.rMultiple)})</span>
@@ -4854,12 +4941,16 @@ function saveSettingsAction() {
   showToast('已儲存', 'success');
 }
 function exportJson() {
+  // 盲測進行中：匯出檔要遮掉本輪的標的與日期，否則等於直接看答案
+  const mask = (x) => (state.blind && x.blindId === state.blind.id)
+    ? { ...x, symbol: '❓盲測進行中', entryTime: null, exitTime: null, chartTime: null }
+    : x;
   const payload = {
     exportedAt: new Date().toISOString(),
     user: state.user ? { name: state.user.name, email: state.user.email } : { name: '訪客' },
     settings: state.settings,
-    openPositions: state.positions,
-    closedTrades: state.trades,
+    openPositions: state.positions.map(mask),
+    closedTrades: state.trades.map(mask),
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -4903,8 +4994,15 @@ function getBlindSetupOpts() {
 function updateBlindPoolHint() {
   const { cats, tf } = getBlindSetupOpts();
   const pool = blindPool(cats, tf);
+  // 列出各類別檔數，讓使用者清楚知道會從哪些類別抽（只會抽有勾選的）
+  const parts = ['futures', 'crypto', 'us', 'tw']
+    .filter(c => cats.includes(c))
+    .map(c => ({ c, n: pool.filter(s => s.category === c).length }))
+    .filter(x => x.n > 0)
+    .map(x => `${CATEGORY_LABELS[x.c] || x.c} ${x.n}`)
+    .join('・');
   $('blind-pool-hint').textContent = pool.length
-    ? `符合條件的隨機池：${pool.length} 檔（隨機抽 1 檔）`
+    ? `隨機池 ${pool.length} 檔（${parts}）— 只會從打勾的類別抽 1 檔`
     : '⚠️ 沒有符合條件的標的（1 小時僅期指與 BTC/ETH/SOL 有資料）';
 }
 
@@ -5006,9 +5104,24 @@ function finishBlindSession(endReason, opts = {}) {
   stopPlay();
   // 本輪未平倉部位以現價自動平倉
   const bar = state.candles[Math.min(state.cursorIndex, state.candles.length - 1)];
+  // 未成交的掛單直接取消（不算交易）
+  state.positions = state.positions.filter(p => !(p.status === 'pending' && p.blindId === b.id));
   const openPos = state.positions.filter(p => p.status === 'open' && p.blindId === b.id);
   for (const p of openPos) {
     closePosition(p, bar.close, '盲測結束平倉', bar.time, endReason || '');
+  }
+  // 揭曉即還原：本輪交易的價格從正規化值換回真實價格（點值同步換算，盈虧與 R 不變）
+  // 否則紀錄會出現「NQ @ 102」這種正規化價位，看起來像資料錯誤
+  const toReal = (v) => v == null ? null : +((v / b.scale).toFixed(priceDp(v / b.scale)));
+  for (const t of state.trades) {
+    if (t.blindId !== b.id || t.pricesRestored) continue;
+    t.entryPrice = toReal(t.entryPrice);
+    t.exitPrice = toReal(t.exitPrice);
+    t.stopLoss = toReal(t.stopLoss);
+    t.takeProfit = toReal(t.takeProfit);
+    if (t.pnlPts != null) t.pnlPts = t.pnlPts / b.scale;
+    if (t.pv != null) t.pv = t.pv * b.scale;
+    t.pricesRestored = true;
   }
   // 統計本輪
   const trades = state.trades.filter(t => t.blindId === b.id);
