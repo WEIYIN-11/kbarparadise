@@ -4288,10 +4288,15 @@ function onDrawingDragMove(e) {
     }
   } else {
     // 'move': 以「K 棒索引」平移（不是時間戳相加），落點才保證是真實 K 棒
-    const deltaIdx = timeToIndex(newTime) - timeToIndex(dd.startTime);
     const maxIdx = Math.min(state.cursorIndex >= 0 ? state.cursorIndex : state.candles.length - 1, state.candles.length - 1);
+    // 位移量整體 clamp（不是逐點）：碰到邊界時整個圖形一起停住，
+    // 逐點 clamp 會讓遠端卡住、近端繼續走，圖形被壓扁且拖不回來
+    const idxs = dd.snapshot.map(pt => timeToIndex(pt.time));
+    const shapeMin = Math.min(...idxs), shapeMax = Math.max(...idxs);
+    const deltaIdx = Math.max(-shapeMin,
+      Math.min(maxIdx - shapeMax, timeToIndex(newTime) - timeToIndex(dd.startTime)));
     const shiftTime = (t) => {
-      const ni = Math.max(0, Math.min(maxIdx, timeToIndex(t) + deltaIdx));
+      const ni = timeToIndex(t) + deltaIdx;
       return state.candles[ni] ? state.candles[ni].time : t;
     };
     const deltaPrice = newPrice - dd.startPrice;
