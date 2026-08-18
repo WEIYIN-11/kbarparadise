@@ -2082,7 +2082,12 @@ function saveStorage() {
       positions: state.positions,
     }));
     localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(state.settings));
-    localStorage.setItem(STORAGE_KEYS.drawings, JSON.stringify(state.drawings));
+    // 空陣列不落地：每造訪一個標的就會留下一個空 key，長期會累積無用空殼
+    const drawingsToSave = {};
+    for (const [k, v] of Object.entries(state.drawings)) {
+      if (Array.isArray(v) && v.length) drawingsToSave[k] = v;
+    }
+    localStorage.setItem(STORAGE_KEYS.drawings, JSON.stringify(drawingsToSave));
     localStorage.setItem(STORAGE_KEYS.indicators, JSON.stringify(state.indicators));
     if (state.drawTemplates) {
       localStorage.setItem(STORAGE_KEYS.drawTemplates, JSON.stringify({
@@ -4382,6 +4387,10 @@ async function loadAndStart() {
   if (typeof clearReviewLines === 'function') clearReviewLines();   // 換場景時移除檢討線
   if (dragState) cancelLineDrag();          // 進行中的線拖曳不可跨到新標的
   if (state.drawingDrag) onDrawingDragEnd();
+  if (_closeTargetId) {                     // 開著的平倉視窗屬於舊標的，一併收掉
+    $('close-modal').classList.remove('show');
+    _closeTargetId = null;
+  }
   // Reset in-progress drawing when switching context
   resetPendingPoints();
   state.posTool = null;
@@ -4499,7 +4508,8 @@ function jumpToDate(dateStr) {
 
 // ---------- SL/TP triggers ----------
 function checkPositionTriggers(newBar) {
-  let changed = false;
+  let changed = false;      // 需要重繪（成交或平倉都算）
+  let didClose = false;     // 真的有新平倉——只有這時才檢查連敗，掛單成交不該觸發熔斷
   for (const p of state.positions) {
     if (p.symbol !== state.symbol || p.timeframe !== state.timeframe || !inScope(p)) continue;
     // 時間守衛：回放檢討或倒退 K 棒時，游標會回到部位建立之前——
@@ -4539,7 +4549,7 @@ function checkPositionTriggers(newBar) {
     }
     if (exitPrice != null) {
       closePosition(p, exitPrice, exitReason, newBar.time, '系統觸發 SL/TP');
-      changed = true;
+      changed = true; didClose = true;
       // 若平倉視窗正對著這個部位，關掉它（否則會留下一個按了沒反應的死視窗）
       if (_closeTargetId === p.id) {
         $('close-modal').classList.remove('show');
@@ -4550,7 +4560,7 @@ function checkPositionTriggers(newBar) {
   if (changed) {
     renderTrades();
     renderReport();
-    checkLossStreak();
+    if (didClose) checkLossStreak();
   }
 }
 
@@ -4839,6 +4849,11 @@ function updateCloseInfo() {
 function openCloseModal(posId) {
   const p = state.positions.find(x => x.id === posId);
   if (!p || p.status !== 'open') return;   // 未成交掛單只能取消，不能平倉
+  // 非當前標的/週期不能平倉：出場價會取到別的商品的 K 棒
+  if (p.symbol !== state.symbol || p.timeframe !== state.timeframe) {
+    showToast(`請先切換到 ${symLabel(p.symbol)} ${p.timeframe} 再平倉`, 'error');
+    return;
+  }
   _closeTargetId = posId;
   const c = state.candles[state.cursorIndex];
   if (!c) return;
@@ -4886,6 +4901,14 @@ function confirmManualClose() {
     $('close-modal').classList.remove('show');
     _closeTargetId = null;
     showToast('這個部位已經不在了（可能已觸價出場）', 'error');
+    return;
+  }
+  // 視窗開著時被切到別的標的/週期：現在的 K 棒屬於另一個商品，
+  // 用它平倉會寫出價格與時間都錯亂的假交易，直接擋下
+  if (p.symbol !== state.symbol || p.timeframe !== state.timeframe) {
+    $('close-modal').classList.remove('show');
+    _closeTargetId = null;
+    showToast(`已切換標的，請切回 ${symLabel(p.symbol)} ${p.timeframe} 再平倉`, 'error');
     return;
   }
   if (!c) return;
@@ -5105,7 +5128,10 @@ function renderBlindHistoryHTML() {
 
 function renderReport() {
   const cont = $('report-content');
-  const trades = state.trades;
+  // 與交易列表同口徑：盲測中只統計本輪，否則報告會混入場外交易
+  const trades = state.blind
+    ? state.trades.filter(t => t.blindId === state.blind.id)
+    : state.trades;
   if (!trades.length) {
     cont.innerHTML = renderBlindHistoryHTML() ||
       '<div class="empty">尚無交易紀錄<br>完成幾筆模擬後彙整即會顯示</div>';
@@ -5215,7 +5241,14 @@ function buildInsightHTML(trades) {
     notes.push(`最常出現的組合是策略「<strong>${escHtml(tag)}</strong>」→「<strong>${escHtml(reason)}</strong>」（${top[1]} 次），值得和教練一起看這組的決策過程。`);
   }
   // 5) 風險一致性
-  const pcts = [...new Set(trades.map(t => Math.round((t.riskPct || 0) * 100) / 100))];
+  // 以母單聚合再比對：分批出場會把一個 1% 決策拆成多筆小數 riskPct，
+  // 逐筆去重會把最自律的學員誤判成「風險設定亂改」
+  const riskByOrder = {};
+  for (const t of trades) {
+    const g = t.parentId || t.id;
+    riskByOrder[g] = (riskByOrder[g] || 0) + (t.riskPct || 0);
+  }
+  const pcts = [...new Set(Object.values(riskByOrder).map(v => Math.round(v * 100) / 100))];
   if (pcts.length > 3) {
     notes.push(`每筆風險 % 用了 ${pcts.length} 種不同設定，部位大小不一致會讓勝率與期望值失真——固定風險比例是統計有效的前提。`);
   }
@@ -5905,6 +5938,8 @@ function wireEvents() {
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    // 拖曳進行中不接受回放快捷鍵：腳下的 K 棒在動會讓拖曳的參考價一直變
+    if (dragState || state.drawingDrag || posToolDrag) return;
     if (e.key === ' ') { e.preventDefault(); togglePlay(); }
     if (e.key === 'ArrowRight') { stopPlay(); advanceBar(1); }
     if (e.key === 'ArrowLeft') { stopPlay(); retreatBar(1); }
