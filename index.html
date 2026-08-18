@@ -1954,7 +1954,7 @@ function loadStorage() {
     if (t) {
       const j = JSON.parse(t);
       state.trades = (j.trades || []).filter(x => x.status === 'closed');
-      state.positions = (j.positions || []).filter(x => x.status === 'open');
+      state.positions = (j.positions || []).filter(x => x.status === 'open' || x.status === 'pending');
     }
   } catch (e) { console.warn('load trades fail', e); }
   try {
@@ -3715,8 +3715,15 @@ let dragState = null; // { posId, type:'sl'|'tp', priceLine, originalPrice }
 function findDraggableLineAtY(y) {
   if (state.tool) return null; // disabled in drawing mode
   for (const p of state.positions) {
-    if (p.status !== 'open') continue;
+    if (p.status !== 'open' && p.status !== 'pending') continue;
     if (p.symbol !== state.symbol || p.timeframe !== state.timeframe || !inScope(p)) continue;
+    // 掛單的進場線可拖曳：調整掛單價，SL/TP 整組平移（已成交的成本線固定不可拖）
+    if (p.status === 'pending') {
+      const eY = candleSeries.priceToCoordinate(p.entryPrice);
+      if (eY != null && Math.abs(y - eY) <= DRAG_HIT_PX) {
+        return { pos: p, type: 'pentry' };
+      }
+    }
     if (p.stopLoss != null) {
       const slY = candleSeries.priceToCoordinate(p.stopLoss);
       if (slY != null && Math.abs(y - slY) <= DRAG_HIT_PX) {
@@ -3745,10 +3752,29 @@ function onDragMove(e) {
   // Clamp: SL/TP must stay on the correct side of the CURRENT price
   // (otherwise the order would already be triggered).
   // SL above current = already stopped out (long); TP below current = already filled (long).
+  // 掛單（pending）以掛單價為基準，而非現價
   const curBar = state.candles[state.cursorIndex];
-  const refPrice = curBar ? curBar.close : p.entryPrice;
+  const refPrice = p.status === 'pending' ? p.entryPrice : (curBar ? curBar.close : p.entryPrice);
   const dp = priceDp(refPrice);
   const eps = Math.pow(10, -dp);
+  const f = Math.pow(10, dp);
+  // 拖掛單進場線：整組平移（SL/TP 跟著移動，距離不變）
+  if (dragState.type === 'pentry') {
+    newPrice = Math.round(newPrice * f) / f;
+    const delta = newPrice - p.entryPrice;
+    if (!delta) return;
+    p.entryPrice = +(p.entryPrice + delta).toFixed(dp);
+    if (p.stopLoss != null) p.stopLoss = +(p.stopLoss + delta).toFixed(dp);
+    if (p.takeProfit != null) p.takeProfit = +(p.takeProfit + delta).toFixed(dp);
+    const lines = posLineMap.get(p.id);
+    if (lines) {
+      lines.entry.applyOptions({ price: p.entryPrice, title: `⏳ ${p.side === 'long' ? 'L' : 'S'} 掛單 ${fmtPrice(p.entryPrice)} …` });
+      if (lines.sl) lines.sl.applyOptions({ price: p.stopLoss, title: slLineTitle(p, p.stopLoss, true) });
+      if (lines.tp) lines.tp.applyOptions({ price: p.takeProfit, title: tpLineTitle(p, p.takeProfit, true) });
+    }
+    renderPositions();
+    return;
+  }
   if (p.side === 'long') {
     if (dragState.type === 'sl') newPrice = Math.min(newPrice, refPrice - eps);
     else newPrice = Math.max(newPrice, refPrice + eps);
@@ -3756,7 +3782,6 @@ function onDragMove(e) {
     if (dragState.type === 'sl') newPrice = Math.max(newPrice, refPrice + eps);
     else newPrice = Math.min(newPrice, refPrice - eps);
   }
-  const f = Math.pow(10, dp);
   newPrice = Math.round(newPrice * f) / f;
   if (dragState.type === 'sl') {
     p.stopLoss = newPrice;
@@ -3783,10 +3808,16 @@ function onDragEnd() {
     // Reset title (remove dragging indicator)
     const lines = posLineMap.get(p.id);
     if (lines) {
+      if (dragState.type === 'pentry') lines.entry.applyOptions({ title: `⏳ ${p.side === 'long' ? 'L' : 'S'} 掛單 ${fmtPrice(p.entryPrice)}` });
       if (lines.sl && p.stopLoss != null) lines.sl.applyOptions({ title: slLineTitle(p, p.stopLoss, false) });
       if (lines.tp && p.takeProfit != null) lines.tp.applyOptions({ title: tpLineTitle(p, p.takeProfit, false) });
     }
-    showToast(`已更新${dragState.type === 'sl' ? '停損' : '停利'} → ${fmtPrice(dragState.type === 'sl' ? p.stopLoss : p.takeProfit)}`, 'success');
+    if (dragState.type === 'pentry') {
+      showToast(`已調整掛單價 → ${fmtPrice(p.entryPrice)}${p.stopLoss != null || p.takeProfit != null ? '（停損/停利同步平移）' : ''}`, 'success');
+    } else {
+      const _price = dragState.type === 'sl' ? p.stopLoss : p.takeProfit;
+      showToast(`已更新${dragState.type === 'sl' ? '停損' : '停利'} → ${fmtPrice(_price)}（預期 ${fmtMoneySigned(pnlAtPrice(p, _price))}）`, 'success');
+    }
   }
   document.body.style.cursor = '';
   document.removeEventListener('mousemove', onDragMove);
@@ -3848,8 +3879,9 @@ function initDragSLTP() {
       dragState = {
         posId: slTpHit.pos.id,
         type: slTpHit.type,
-        priceLine: slTpHit.type === 'sl' ? lines.sl : lines.tp,
-        originalPrice: slTpHit.type === 'sl' ? slTpHit.pos.stopLoss : slTpHit.pos.takeProfit,
+        priceLine: slTpHit.type === 'sl' ? lines.sl : slTpHit.type === 'tp' ? lines.tp : lines.entry,
+        originalPrice: slTpHit.type === 'sl' ? slTpHit.pos.stopLoss
+          : slTpHit.type === 'tp' ? slTpHit.pos.takeProfit : slTpHit.pos.entryPrice,
       };
       document.body.style.cursor = 'ns-resize';
       document.addEventListener('mousemove', onDragMove);
@@ -4255,13 +4287,15 @@ function updateOrderSummary() {
     $('order-size-hint').textContent = '部位大小將依停損距離自動計算';
     return;
   }
-  // 方向驗證：只驗有填的欄位
+  // 方向驗證：只驗有填的欄位（失敗時同步清掉 size hint，避免殘留舊值）
   if (sl != null && (side === 'long' ? sl >= entry : sl <= entry)) {
     summary.innerHTML = `<div class="row"><span style="color:var(--warn);">${side === 'long' ? '停損須低於進場價' : '停損須高於進場價'}</span></div>`;
+    $('order-size-hint').textContent = '部位大小將依停損距離自動計算';
     return;
   }
   if (tp != null && (side === 'long' ? tp <= entry : tp >= entry)) {
     summary.innerHTML = `<div class="row"><span style="color:var(--warn);">${side === 'long' ? '停利須高於進場價' : '停利須低於進場價'}</span></div>`;
+    $('order-size-hint').textContent = '部位大小將依停損距離自動計算';
     return;
   }
   const { size, riskAmount, dist, noSl } = calcOrderSize(entry, sl, riskPct, balance);
@@ -4278,7 +4312,7 @@ function updateOrderSummary() {
   if (tp != null) {
     const rewardDist = Math.abs(tp - entry);
     rows.push(`<div class="row reward"><span>停利目標</span><span class="v">${fmtMoney(rewardDist * ptValue * size)}</span></div>`);
-    rows.push(`<div class="row"><span>盈虧比 R:R</span><span class="v">1:${(rewardDist / dist).toFixed(2)}</span></div>`);
+    rows.push(`<div class="row"><span>盈虧比 R:R</span><span class="v">1:${(rewardDist / dist).toFixed(2)}${noSl ? '（估）' : ''}</span></div>`);
   } else {
     rows.push('<div class="row"><span>停利</span><span class="v">未設，可進場後在圖上補</span></div>');
   }
@@ -4384,7 +4418,12 @@ function renderPositions() {
             : `<div class="pos-pnl ${pnlClass}">${fmtMoney(pnl)} <span style="font-size:10px;">${fmtR(rMul)}</span></div>`}
         </div>
         <div class="pos-row"><span>${pending ? '掛單價' : '進場'}</span><span class="v">${fmtPrice(p.entryPrice)} · ${isMasked(p) ? '❓' : fmtDateTime(p.entryTime, p.timeframe)}</span></div>
-        <div class="pos-row"><span>停損 / 停利</span><span class="v">${p.stopLoss != null ? fmtPrice(p.stopLoss) : '—'} / ${p.takeProfit != null ? fmtPrice(p.takeProfit) : '—'}</span></div>
+        <div class="pos-row"><span>停損</span><span class="v">${p.stopLoss != null
+          ? `${fmtPrice(p.stopLoss)} · <span style="color:${pnlAtPrice(p, p.stopLoss) >= 0 ? 'var(--accent-2)' : 'var(--danger-2)'};">${fmtMoneySigned(pnlAtPrice(p, p.stopLoss))}</span>`
+          : '—（未設）'}</span></div>
+        <div class="pos-row"><span>停利</span><span class="v">${p.takeProfit != null
+          ? `${fmtPrice(p.takeProfit)} · <span style="color:${pnlAtPrice(p, p.takeProfit) >= 0 ? 'var(--accent-2)' : 'var(--danger-2)'};">${fmtMoneySigned(pnlAtPrice(p, p.takeProfit))}</span>`
+          : '—（未設）'}</span></div>
         <div class="pos-row"><span>部位</span><span class="v">${sizeStr(p)} · 風險 ${fmtMoney(p.riskAmount)}</span></div>
         <div class="pos-row"><span>策略</span><span class="v">${escHtml(p.strategyTag)}</span></div>
         ${isCurrent ? (pending ? `<div class="pos-actions">
@@ -4423,21 +4462,30 @@ function cancelPendingOrder(posId) {
   showToast('已取消掛單', 'success');
 }
 
-// 進場後補設停損/停利：先放在現價 ±1%，再讓使用者到圖上拖曳調整
+// 進場後補設停損/停利：先放預設位置，再讓使用者到圖上拖曳調整
 function addPosStop(posId, type) {
   const p = state.positions.find(x => x.id === posId);
   const c = state.candles[state.cursorIndex];
   if (!p || !c) return;
+  if (type === 'sl' ? p.stopLoss != null : p.takeProfit != null) return;  // 已有就不覆蓋
   const dp = priceDp(c.close);
   const dir = p.side === 'long' ? 1 : -1;
-  const off = c.close * 0.01;
-  const price = type === 'sl' ? c.close - dir * off : c.close + dir * off;
+  let price;
+  if (type === 'sl') {
+    price = c.close - dir * c.close * 0.01;
+  } else {
+    // 停利以「現價與進場價較有利一側」再外推 1%：虧損中補停利不會落在進場價錯邊
+    // （否則出場會被標成「達停利」但實際是虧損，污染統計）
+    const base = p.side === 'long' ? Math.max(c.close, p.entryPrice) : Math.min(c.close, p.entryPrice);
+    price = base + dir * base * 0.01;
+  }
   if (type === 'sl') p.stopLoss = +price.toFixed(dp);
   else p.takeProfit = +price.toFixed(dp);
   saveStorage();
   redrawPositionLines();
   renderPositions();
-  showToast(`已加上${type === 'sl' ? '停損' : '停利'}線（現價 ±1%），可在圖表上拖曳調整`, 'success');
+  const newPrice = type === 'sl' ? p.stopLoss : p.takeProfit;
+  showToast(`已加上${type === 'sl' ? '停損' : '停利'}線 @ ${fmtPrice(newPrice)}（預期 ${fmtMoneySigned(pnlAtPrice(p, newPrice))}），可在圖表上拖曳調整`, 'success');
 }
 
 let _closeTargetId = null;
@@ -5064,13 +5112,19 @@ async function enterBlindReplay() {
   state.symbol = b.symbol;
   state.timeframe = b.timeframe;
   // 價格正規化：起始價 = 100，避免從價位認出標的（點值同步換算，金額不受影響）
+  // 成交量也同步正規化（起始前 60 根平均 ≈ 100）：量級差 3~4 個數量級會洩漏資產類別
+  // （台股動輒千萬股、BTC 只有幾萬顆）；等比縮放不改變形態，VWAP/OBV 等比例型指標不受影響
+  const vFrom = Math.max(0, b.startIndex - BLIND_CONTEXT_BARS);
+  const vSlice = raw.slice(vFrom, b.startIndex + 1);
+  const vAvg = vSlice.reduce((s, c) => s + (c.volume || 0), 0) / (vSlice.length || 1);
+  const vScale = vAvg > 0 ? 100 / vAvg : 1;
   state.candles = raw.map(c => ({
     time: c.time,
     open: c.open * b.scale,
     high: c.high * b.scale,
     low: c.low * b.scale,
     close: c.close * b.scale,
-    volume: c.volume,
+    volume: (c.volume || 0) * vScale,
   }));
   state.cursorIndex = Math.min(b.cursorIndex ?? b.startIndex, b.endIndex);
   applyPriceFormat();
