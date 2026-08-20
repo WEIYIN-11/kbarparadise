@@ -152,6 +152,35 @@ input, textarea { user-select: text; }
   display: none;
 }
 .login-error.show { display: block; }
+/* 非會員攔截卡：告知是哪個 Email 沒訂閱，再導向 Skool 付費頁 */
+#nomember-card { display: none; }
+.nomember-email {
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: var(--text);
+  word-break: break-all;
+}
+.btn-plans {
+  width: 100%;
+  padding: 12px 20px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  transition: transform 0.1s, opacity 0.2s;
+}
+.btn-plans:hover { transform: translateY(-1px); }
+.nomember-count {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-3);
+  min-height: 16px;
+}
 
 /* ==========================
    App shell layout
@@ -1105,7 +1134,7 @@ input, textarea { user-select: text; }
      LOGIN OVERLAY
 ========================== -->
 <div id="login-overlay">
-  <div class="login-card">
+  <div class="login-card" id="login-card">
     <div class="login-logo">📈</div>
     <h1>練功房</h1>
     <p>歷史 K 棒模擬訓練 · 方舟藍圖會員專屬</p>
@@ -1122,6 +1151,21 @@ input, textarea { user-select: text; }
     <div class="login-hint">
       使用<strong>方舟藍圖</strong>同一組帳號登入<br>
       僅限有效訂閱會員使用；尚未訂閱請先至 ark-blueprint.com
+    </div>
+  </div>
+
+  <!-- 非會員：登入成功但沒有有效訂閱 → 顯示原因後自動導向 Skool -->
+  <div class="login-card" id="nomember-card">
+    <div class="login-logo">🔒</div>
+    <h1>會員權限尚未啟動</h1>
+    <p>帳號登入成功，但這個 Email 沒有有效的訂閱記錄</p>
+    <div class="nomember-email" id="nomember-email"></div>
+    <button id="btn-plans" class="btn-plans">前往方舟藍圖訂閱</button>
+    <div class="nomember-count" id="nomember-count"></div>
+    <button id="btn-switch-account" class="btn-guest">換一個帳號登入</button>
+    <div class="login-hint">
+      剛在 Skool 完成付款？系統 5 分鐘內自動同步，稍候重新整理本頁即可。<br>
+      若你在 Skool 用的是<strong>另一個 Email</strong>（例如 Google 選到別的帳號），請點上面「換一個帳號登入」或聯絡教練。
     </div>
   </div>
 </div>
@@ -5419,9 +5463,13 @@ async function doGoogleSignIn() {
   }
   $('login-error').classList.remove('show');
   $('btn-google').disabled = true;
+  // 被非會員攔截過才強制跳帳號選擇器：一般會員不用多按一次，
+  // 但「用錯 Google 帳號」的人不會被 Google 靜默丟回同一個帳號
+  const opts = { redirectTo: location.origin };
+  if (_forceAccountChooser) opts.queryParams = { prompt: 'select_account' };
   const { error } = await window.sb.auth.signInWithOAuth({
     provider: 'google',
-    options: { redirectTo: location.origin },
+    options: opts,
   });
   // 成功會整頁跳轉到 Google；只有失敗會走到這裡
   if (error) {
@@ -5448,6 +5496,43 @@ async function sendMagicLink() {
     $('btn-magiclink').textContent = '✓ 已寄出，請到信箱點連結';
   }
 }
+// 非會員攔截：不是丟一行紅字就算了，導去 Skool 付費頁
+const PLANS_URL = 'https://www.skool.com/blue-print/about';
+const NOMEMBER_REDIRECT_SEC = 5;
+let _nomemberTimer = null;
+let _forceAccountChooser = false;
+function showNotMember(email) {
+  $('nomember-email').textContent = email || '（未取得 Email）';
+  $('login-error').classList.remove('show');
+  $('login-card').style.display = 'none';
+  $('nomember-card').style.display = 'block';
+  // 先讓人看清楚是「哪個 Email」沒訂閱再跳（最常見的情況是 Google 選錯帳號，
+  // 直接硬跳走會讓人以為要重買一份）
+  let left = NOMEMBER_REDIRECT_SEC;
+  const render = () => { $('nomember-count').textContent = `${left} 秒後自動前往訂閱頁…`; };
+  render();
+  clearInterval(_nomemberTimer);
+  _nomemberTimer = setInterval(() => {
+    left--;
+    if (left <= 0) {
+      cancelNotMemberRedirect();
+      $('nomember-count').textContent = '前往中…';
+      location.href = PLANS_URL;
+      return;
+    }
+    render();
+  }, 1000);
+}
+function cancelNotMemberRedirect() {
+  if (_nomemberTimer) { clearInterval(_nomemberTimer); _nomemberTimer = null; }
+}
+function backToLogin() {
+  cancelNotMemberRedirect();
+  $('nomember-count').textContent = '';
+  $('nomember-card').style.display = 'none';
+  $('login-card').style.display = 'block';
+  $('btn-google').disabled = false;
+}
 function showLoginError(msg) {
   const errEl = $('login-error');
   errEl.textContent = msg;
@@ -5471,15 +5556,15 @@ async function handleAuthSuccess(sbUser) {
   const m = await fetchMembership(sbUser.email, sbUser.id);
   if (!m.ok) {
     _handledUid = null;
+    backToLogin();
     showLoginError('連線異常，請重新整理再試（' + m.error + '）');
-    $('btn-google').disabled = false;
     return;
   }
   if (!m.allowed) {
     _handledUid = null;
-    showLoginError(`${sbUser.email} 不是方舟藍圖有效訂閱會員。請先至 ark-blueprint.com 訂閱，或聯絡教練。`);
-    try { await window.sb.auth.signOut(); } catch {}
-    $('btn-google').disabled = false;
+    showNotMember(sbUser.email);
+    // 不 await：登出走網路，不能讓攔截畫面卡在轉圈
+    window.sb.auth.signOut().catch(() => {});
     return;
   }
   const meta = sbUser.user_metadata || {};
@@ -5952,6 +6037,15 @@ function wireLogin() {
     doGoogleSignIn();
   });
   $('btn-magiclink').addEventListener('click', sendMagicLink);
+  $('btn-plans').addEventListener('click', () => {
+    cancelNotMemberRedirect();
+    location.href = PLANS_URL;
+  });
+  $('btn-switch-account').addEventListener('click', () => {
+    _forceAccountChooser = true;   // 下一次 Google 登入強制跳帳號選擇器
+    backToLogin();
+    window.sb?.auth.signOut().catch(() => {});
+  });
   $('login-email').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') sendMagicLink();
   });
