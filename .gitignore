@@ -8,3 +8,5 @@ node_modules/
 # 更新資料：npm run fetch 後 commit
 data/registry-cache.json
 
+.vercel
+.env*
