@@ -80,7 +80,12 @@ input, textarea { user-select: text; }
   background: linear-gradient(135deg, #131722 0%, #1c2030 100%);
   z-index: 9999;
   display: flex; align-items: center; justify-content: center;
+  /* 卡片比視窗高時（橫向手機）純 center 會把上緣推到 scrollTop 0 之上、永遠捲不到。
+     safe center 在空間不足時自動退回貼齊上緣，兩行都留是給不認識 safe 的舊瀏覽器墊底 */
+  justify-content: safe center;
   flex-direction: column;
+  overflow-y: auto;
+  padding: 20px 0;
 }
 .login-card {
   background: var(--bg-2);
@@ -90,6 +95,7 @@ input, textarea { user-select: text; }
   width: 90%; max-width: 380px;
   text-align: center;
   box-shadow: var(--shadow);
+  flex-shrink: 0;
 }
 .login-logo { font-size: 48px; margin-bottom: 8px; }
 .login-card h1 { font-size: 22px; margin-bottom: 4px; }
@@ -110,6 +116,7 @@ input, textarea { user-select: text; }
   width: 100%;
   margin-top: 12px;
   padding: 10px;
+  min-height: 44px;
   background: var(--bg-3);
   color: var(--text-2);
   border-radius: 8px;
@@ -167,6 +174,7 @@ input, textarea { user-select: text; }
 .btn-plans {
   width: 100%;
   padding: 12px 20px;
+  min-height: 44px;
   background: var(--accent);
   color: #fff;
   border-radius: 8px;
@@ -5466,7 +5474,7 @@ async function doGoogleSignIn() {
   // 被非會員攔截過才強制跳帳號選擇器：一般會員不用多按一次，
   // 但「用錯 Google 帳號」的人不會被 Google 靜默丟回同一個帳號
   const opts = { redirectTo: location.origin };
-  if (_forceAccountChooser) opts.queryParams = { prompt: 'select_account' };
+  if (getForceChooser()) opts.queryParams = { prompt: 'select_account' };
   const { error } = await window.sb.auth.signInWithOAuth({
     provider: 'google',
     options: opts,
@@ -5498,10 +5506,26 @@ async function sendMagicLink() {
 }
 // 非會員攔截：不是丟一行紅字就算了，導去 Skool 付費頁
 const PLANS_URL = 'https://www.skool.com/blue-print/about';
-const NOMEMBER_REDIRECT_SEC = 5;
+const NOMEMBER_REDIRECT_SEC = 8;
+const CHOOSER_KEY = 'tradersim.forceChooser';
 let _nomemberTimer = null;
-let _forceAccountChooser = false;
+let _signOutPromise = null;
+
+// 「下次 Google 登入強制跳帳號選擇器」的旗標。放 sessionStorage 而不是記憶體：
+// 攔截卡本身就會把人整頁送去 Skool，記憶體變數活不過那一趟，
+// 使用者按上一頁回來又會被 Google 靜默丟回同一個錯帳號，原地打轉。
+function setForceChooser(on) {
+  try { on ? sessionStorage.setItem(CHOOSER_KEY, '1') : sessionStorage.removeItem(CHOOSER_KEY); } catch {}
+}
+function getForceChooser() {
+  try { return sessionStorage.getItem(CHOOSER_KEY) === '1'; } catch { return false; }
+}
+
 function showNotMember(email) {
+  // overlay 可能已被 hideLogin() 藏起來（App 正在用，另一個帳號的 auth 事件飄進來）。
+  // 不先叫出來就會變成「看不見的倒數」，時間到把人整頁踢走且畫面毫無提示。
+  showLogin();
+  setForceChooser(true);
   $('nomember-email').textContent = email || '（未取得 Email）';
   $('login-error').classList.remove('show');
   $('login-card').style.display = 'none';
@@ -5514,14 +5538,19 @@ function showNotMember(email) {
   clearInterval(_nomemberTimer);
   _nomemberTimer = setInterval(() => {
     left--;
-    if (left <= 0) {
-      cancelNotMemberRedirect();
-      $('nomember-count').textContent = '前往中…';
-      location.href = PLANS_URL;
-      return;
-    }
+    if (left <= 0) { goPlans(); return; }
     render();
   }, 1000);
+}
+async function goPlans() {
+  cancelNotMemberRedirect();
+  $('nomember-count').textContent = '前往中…';
+  // 登出是非同步的（先打 /logout 再清 localStorage）。導頁若搶在它前面，
+  // token 會殘留，使用者回來又被自動攔截一次。等它，但最多等 600ms。
+  if (_signOutPromise) {
+    try { await Promise.race([_signOutPromise, new Promise(r => setTimeout(r, 600))]); } catch {}
+  }
+  location.href = PLANS_URL;
 }
 function cancelNotMemberRedirect() {
   if (_nomemberTimer) { clearInterval(_nomemberTimer); _nomemberTimer = null; }
@@ -5532,6 +5561,10 @@ function backToLogin() {
   $('nomember-card').style.display = 'none';
   $('login-card').style.display = 'block';
   $('btn-google').disabled = false;
+  // magic link 按鈕成功後會停在 disabled 的「✓ 已寄出」，回到登入卡若不還原，
+  // 使用者沒辦法改用另一個 Email 重寄，畫面還在說信寄出去了
+  $('btn-magiclink').disabled = false;
+  $('btn-magiclink').textContent = '寄送登入連結';
 }
 function showLoginError(msg) {
   const errEl = $('login-error');
@@ -5552,6 +5585,14 @@ let _handledUid = null;
 async function handleAuthSuccess(sbUser) {
   if (_handledUid === sbUser.id) return;   // token refresh 等事件重複觸發時跳過
   _handledUid = sbUser.id;
+  // 沒有 email 就無從比對訂閱（fetchMembership 會在 email.toLowerCase() 直接 throw，
+  // 被吃成「連線異常」把 TypeError 噴到畫面上）。當成非會員擋下才是對的。
+  if (!sbUser.email) {
+    _handledUid = null;
+    showNotMember('');
+    _signOutPromise = window.sb.auth.signOut().catch(() => {});
+    return;
+  }
   // 會員資格檢查（= 白名單同步方舟訂閱會員）
   const m = await fetchMembership(sbUser.email, sbUser.id);
   if (!m.ok) {
@@ -5563,10 +5604,15 @@ async function handleAuthSuccess(sbUser) {
   if (!m.allowed) {
     _handledUid = null;
     showNotMember(sbUser.email);
-    // 不 await：登出走網路，不能讓攔截畫面卡在轉圈
-    window.sb.auth.signOut().catch(() => {});
+    // 不 await：登出走網路，不能讓攔截畫面卡在轉圈。goPlans() 會在導頁前補等一下。
+    _signOutPromise = window.sb.auth.signOut().catch(() => {});
     return;
   }
+  // 走到這裡＝有效會員。先把可能還在跑的非會員倒數殺掉再做任何 await：
+  // 跨分頁 auth 事件會讓「攔截卡倒數中」和「本分頁登入成功」同時成立，
+  // 若拖到 loadFromCloud 等網路才處理，倒數會先把已登入的付費會員踢去 Skool。
+  backToLogin();
+  setForceChooser(false);
   const meta = sbUser.user_metadata || {};
   setUser({
     uid: sbUser.id,
@@ -6037,14 +6083,15 @@ function wireLogin() {
     doGoogleSignIn();
   });
   $('btn-magiclink').addEventListener('click', sendMagicLink);
-  $('btn-plans').addEventListener('click', () => {
-    cancelNotMemberRedirect();
-    location.href = PLANS_URL;
-  });
+  $('btn-plans').addEventListener('click', () => { goPlans(); });
   $('btn-switch-account').addEventListener('click', () => {
-    _forceAccountChooser = true;   // 下一次 Google 登入強制跳帳號選擇器
+    setForceChooser(true);   // 下一次 Google 登入強制跳帳號選擇器
     backToLogin();
-    window.sb?.auth.signOut().catch(() => {});
+    _signOutPromise = window.sb?.auth.signOut().catch(() => {});
+  });
+  // 從 Skool 按上一頁若走 bfcache，畫面會停在「前往中…」看起來當掉
+  window.addEventListener('pageshow', (e) => {
+    if (e.persisted && $('nomember-card').style.display === 'block') backToLogin();
   });
   $('login-email').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') sendMagicLink();
