@@ -438,7 +438,7 @@ input, textarea { user-select: text; }
 .chart-area {
   flex: 1;
   display: flex;
-  min-width: 0;
+  min-width: 320px;  /* 拖分隔線或縮視窗時圖表區的下限；側欄設 flex-shrink:1，超出時是側欄先讓位 */
   min-height: 0;   /* 手機直向（.main 轉 column）時，沒有這行畫線工具列會把下單面板頂出畫面 */
   background: var(--bg);
 }
@@ -630,12 +630,31 @@ input, textarea { user-select: text; }
 
 /* Side panel */
 .side {
-  width: 340px;
+  /* 尺寸走 CSS 變數而不是 inline width：inline style 優先權高過 @media，
+     跨 900px 斷點時會用桌機寬度把手機版面鎖死。變數則是「哪個方向的規則生效就讀哪個」 */
+  width: var(--side-w, 340px);
   background: var(--bg-2);
   border-left: 1px solid var(--line);
   display: flex; flex-direction: column;
-  flex-shrink: 0;
+  flex-shrink: 1;   /* 視窗窄到 .chart-area 的 320px 下限時，讓側欄先讓位 */
+  min-width: 0;
 }
+
+/* 版面分隔線：桌機左右拖改側欄寬、手機上下拖改側欄高、雙擊回預設。
+   整塊佔 12px（手指摸得到），但 background-clip 只在 content box 上色，
+   視覺上仍是 4px 細線——不往圖表那側外擴 hit area，否則會吃掉右側價格軸的拖曳縮放 */
+.pane-resizer {
+  flex: 0 0 12px;
+  padding: 0 4px;
+  background: var(--line);
+  background-clip: content-box;
+  cursor: col-resize;
+  touch-action: none;   /* 手機上不加這行，拖分隔線會被瀏覽器判成頁面捲動 */
+  z-index: 4;
+}
+.pane-resizer:hover, .pane-resizer.dragging { background: var(--accent); background-clip: content-box; }
+body.pane-resizing { user-select: none; -webkit-user-select: none; cursor: col-resize; }
+body.pane-resizing.row { cursor: row-resize; }
 .side-tabs {
   display: flex;
   border-bottom: 1px solid var(--line);
@@ -671,6 +690,22 @@ input, textarea { user-select: text; }
   letter-spacing: 0.5px;
   margin-bottom: 8px;
 }
+/* 標題列右側掛動作鈕（目前只有一鍵平倉）：標題本身縮成 span，避免整列被 flex 拉高 */
+.side-h-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.btn-close-all {
+  padding: 4px 9px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--bg-4);
+  color: var(--text);
+  text-transform: none;      /* 繼承自 .side-h 的 uppercase/letter-spacing 會把中文擠開 */
+  letter-spacing: 0;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  min-height: 26px;          /* 手機上要摸得到 */
+}
+.btn-close-all:hover { background: var(--danger); color: #fff; }
 .order-side-toggle {
   display: grid; grid-template-columns: 1fr 1fr;
   gap: 6px;
@@ -1183,11 +1218,20 @@ input, textarea { user-select: text; }
 ========================== */
 @media (max-width: 900px) {
   .main { flex-direction: column; }
+  .chart-area { min-width: 0; }   /* 直向時 320px 下限是量在高度上的，寬度不該再卡 */
   .side {
     width: 100%;
-    height: 280px;
+    height: var(--side-h, 280px);
     border-left: none;
     border-top: 1px solid var(--line);
+    flex-shrink: 0;   /* 高度已被 70% 上限夾住，不需要再讓位；留 shrink 反而會被內容撐開的下單面板頂變形 */
+    min-height: 0;
+  }
+  .pane-resizer {
+    flex: 0 0 12px;
+    width: 100%;
+    padding: 4px 0;
+    cursor: row-resize;
   }
   .topbar { padding: 0 10px; gap: 8px; flex-wrap: wrap; }
   .hot-stat { display: none; }
@@ -1295,7 +1339,7 @@ input, textarea { user-select: text; }
   </div>
 
   <!-- Main: chart + side panel -->
-  <div class="main">
+  <div class="main" id="main-pane">
     <div class="chart-area">
 
       <!-- Drawing toolbar（TV 式工具組）-->
@@ -1468,6 +1512,9 @@ input, textarea { user-select: text; }
       </div>
     </div>
 
+    <!-- 版面分隔線（桌機左右拖 / 手機上下拖，雙擊回預設）-->
+    <div class="pane-resizer" id="pane-resizer" role="separator" aria-label="調整圖表與面板大小" title="拖曳調整大小 · 雙擊回預設"></div>
+
     <!-- Side panel -->
     <div class="side">
       <div class="side-tabs">
@@ -1537,7 +1584,11 @@ input, textarea { user-select: text; }
 
         <!-- Positions pane -->
         <div class="side-pane" data-pane="positions">
-          <div class="side-h">持倉中</div>
+          <div class="side-h side-h-row">
+            <span>持倉中</span>
+            <!-- 沒有可處理的部位時由 renderPositions 隱藏：一顆按了沒反應的鈕比沒有鈕更糟 -->
+            <button class="btn-close-all" id="btn-close-all" style="display:none;">⚡ 一鍵平倉</button>
+          </div>
           <div id="positions-list"></div>
         </div>
 
@@ -1897,6 +1948,29 @@ input, textarea { user-select: text; }
   </div>
 </div>
 
+<!-- ==========================
+     MODAL: 餘額歸零強制出局（爆倉）
+     擺在盲測結果之後：爆倉時兩個視窗會同時開著，後宣告的要疊在上面先被看到
+========================== -->
+<div class="modal-bg" id="blowup-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>💀 爆倉出局</h3>
+      <button class="modal-close" data-close="blowup-modal">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="blowup-body" style="font-size:14px;line-height:1.8;color:var(--text);"></div>
+      <div class="field-hint" style="margin-top:12px;">
+        爆倉不是運氣問題，是部位大小的問題：能讓單一輪把本金歸零的風險比例，長期一定會歸零。<br>
+        下一輪先把每筆風險壓回 1~2%，再談進出場。
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" data-close="blowup-modal">我知道了</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -2002,7 +2076,8 @@ const state = {
   orderSide: 'long',
   positions: [],
   trades: [],
-  settings: { balance: 100000 },
+  // sideWidth / sideHeight 分開存：同一個人在電腦拉寬側欄後用手機開，不該把手機版面一起改掉
+  settings: { balance: 100000, sideWidth: 340, sideHeight: 280 },
   blind: null,          // 進行中盲測 { id, symbol, timeframe, scale, startIndex, endIndex, cursorIndex, playBars, startedAt }
   blindHistory: [],     // 已完成盲測摘要（新到舊）
   cache: {},            // { 'NQ_1h': candles, ... }
@@ -2319,7 +2394,127 @@ function initChart() {
     if (!c) return;
     updateLegend(c, param.time);
   });
-  window.addEventListener('resize', () => chart.applyOptions({}));
+  // 這裡不能只 applyOptions({})：lightweight-charts v4 沒開 autoSize 時 applyOptions 不碰尺寸，
+  // 圖表會一直停在建立當下的寬高，價格↔座標換算跟著失準（畫線就會整條偏掉）
+  window.addEventListener('resize', syncPaneChartSizes);
+}
+
+// ============================================================
+// 版面分隔線（圖表區 ⇄ 側欄，可拖曳）
+// ============================================================
+const PANE_DEFAULT = { width: 340, height: 280 };
+// minChart：圖表區的絕對下限，視窗窄到放不下時它優先於 side 的 min/max
+const PANE_LIMIT = { minW: 260, maxW: 620, minChart: 320, minH: 160, maxHRatio: 0.7 };
+let _paneRaf = 0;
+
+// 900px 是 .main 由 row 轉 column 的斷點；用 matchMedia 讀同一個門檻，避免兩邊各寫一份數字
+function isPaneColumn() {
+  return window.matchMedia('(max-width: 900px)').matches;
+}
+
+function clampSideWidth(px) {
+  const main = $('main-pane');
+  const resizer = $('pane-resizer');
+  const total = (main && main.clientWidth) || window.innerWidth;
+  const gap = (resizer && resizer.offsetWidth) || 12;
+  // 視窗放不下時 minChart 蓋過 maxW，再蓋過 minW：先夾上限、後夾下限
+  const cap = Math.min(PANE_LIMIT.maxW, total - PANE_LIMIT.minChart - gap);
+  return Math.round(Math.max(PANE_LIMIT.minW, Math.min(cap, px)));
+}
+
+function clampSideHeight(px) {
+  const main = $('main-pane');
+  const total = (main && main.clientHeight) || window.innerHeight;
+  const cap = Math.max(PANE_LIMIT.minH, Math.round(total * PANE_LIMIT.maxHRatio));
+  return Math.round(Math.max(PANE_LIMIT.minH, Math.min(cap, px)));
+}
+
+// 只改 CSS 變數、不寫 .side 的 inline width/height，斷點切換時才不會有殘留的鎖死
+function applyPaneVars() {
+  const main = $('main-pane');
+  if (!main) return;
+  const s = state.settings;
+  main.style.setProperty('--side-w', (s.sideWidth || PANE_DEFAULT.width) + 'px');
+  main.style.setProperty('--side-h', (s.sideHeight || PANE_DEFAULT.height) + 'px');
+}
+
+// 版面尺寸一動就得把圖表拉回容器大小，否則 priceToCoordinate 還在用舊寬高，畫線座標會跑掉
+function syncPaneChartSizes() {
+  if (!chart) return;
+  // 第三個參數 forceRepaint 一定要 true：不給的話 v4 只改外層 div 的 style，
+  // 內部畫布與價格軸要等下一次 rAF 才跟上，而下面的 redrawDrawings() 會先用到舊的
+  // priceToCoordinate，畫出來的線就會整條偏掉一幀（甚至沒有下一次重畫就永久偏）
+  const el = $('chart');
+  if (el && el.clientWidth > 0 && el.clientHeight > 0) {
+    try { chart.resize(el.clientWidth, el.clientHeight, true); } catch {}
+  }
+  for (const name of Object.keys(subCharts)) {
+    const box = document.querySelector(`#subpane-${name} .subpane-chart`);
+    if (!box || !box.clientWidth || !box.clientHeight) continue;
+    try { subCharts[name].chart.resize(box.clientWidth, box.clientHeight, true); } catch {}
+  }
+  // ResizeObserver 也會補這兩步，但它是下一幀才到；拖曳放手當下要立刻正確
+  resizeDrawCanvas();
+  redrawDrawings();
+}
+
+function initPaneResizer() {
+  const bar = $('pane-resizer');
+  if (!bar) return;
+  state.settings.sideWidth = clampSideWidth(state.settings.sideWidth || PANE_DEFAULT.width);
+  state.settings.sideHeight = clampSideHeight(state.settings.sideHeight || PANE_DEFAULT.height);
+  applyPaneVars();
+
+  let dragging = false, column = false;
+
+  const moveTo = (ev) => {
+    const rect = $('main-pane').getBoundingClientRect();
+    if (column) state.settings.sideHeight = clampSideHeight(rect.bottom - ev.clientY);
+    else state.settings.sideWidth = clampSideWidth(rect.right - ev.clientX);
+    applyPaneVars();
+  };
+
+  bar.addEventListener('pointerdown', (ev) => {
+    if (ev.button != null && ev.button !== 0) return;
+    dragging = true;
+    column = isPaneColumn();
+    try { bar.setPointerCapture(ev.pointerId); } catch {}   // 抓不到 capture 也不該讓整個拖曳掛掉
+    bar.classList.add('dragging');
+    document.body.classList.add('pane-resizing');
+    document.body.classList.toggle('row', column);
+    ev.preventDefault();
+  });
+
+  bar.addEventListener('pointermove', (ev) => {
+    if (!dragging) return;
+    ev.preventDefault();
+    moveTo(ev);
+    // 拖曳中用 rAF 節流重量級的圖表重算；放手時另有一次同步的完整更新兜底
+    if (!_paneRaf) _paneRaf = requestAnimationFrame(() => { _paneRaf = 0; syncPaneChartSizes(); });
+  });
+
+  const end = (ev) => {
+    if (!dragging) return;
+    dragging = false;
+    try { bar.releasePointerCapture(ev.pointerId); } catch {}
+    bar.classList.remove('dragging');
+    document.body.classList.remove('pane-resizing', 'row');
+    if (_paneRaf) { cancelAnimationFrame(_paneRaf); _paneRaf = 0; }
+    moveTo(ev);
+    syncPaneChartSizes();   // 最終狀態一定同步跑完一次，不依賴 rAF 是否有排到
+    saveStorage();
+  };
+  bar.addEventListener('pointerup', end);
+  bar.addEventListener('pointercancel', end);
+
+  bar.addEventListener('dblclick', () => {
+    if (isPaneColumn()) state.settings.sideHeight = clampSideHeight(PANE_DEFAULT.height);
+    else state.settings.sideWidth = clampSideWidth(PANE_DEFAULT.width);
+    applyPaneVars();
+    syncPaneChartSizes();
+    saveStorage();
+    showToast('版面已回復預設', 'success');
+  });
 }
 
 // TV 式左上角 legend（symbol · 週期 · O H L C ±chg）
@@ -4570,6 +4765,10 @@ function advanceBar(n = 1) {
   updateHotStats();
   // 盲測進度每 10 根落地一次（原本只靠 beforeunload，瀏覽器崩潰或手機被回收就會退回舊位置）
   if (state.blind && state.cursorIndex % 10 === 0) saveStorage();
+  // 爆倉檢查放在整段推進跑完後只做一次：權益要掃全部交易與部位，逐根算既昂貴，
+  // 又會讓一次 advanceBar(10) 連彈好幾次提示。連播是每 tick 呼叫 advanceBar(1)，逐根照樣覆蓋到。
+  // 排在 blindDone 前面：真的沒錢了就是出局，不該被記成「跑完設定長度」的正常收場。
+  if (checkBlowUp()) return;
   if (blindDone) {
     stopPlay();
     finishBlindSession('跑完設定長度');
@@ -4841,6 +5040,10 @@ function renderPositions() {
   const open = state.positions.filter(p => (p.status === 'open' || p.status === 'pending') && inScope(p));
   $('badge-pos').style.display = open.length > 0 ? 'inline' : 'none';
   $('pos-count').textContent = open.length;
+  // 一鍵平倉只在「真的按得動」時出現：一鍵平倉碰不到別的標的／週期，
+  // 所以光有其他標的部位不算數，否則按下去只會跳一句「沒有可處理的部位」
+  $('btn-close-all').style.display =
+    open.some(p => p.symbol === state.symbol && p.timeframe === state.timeframe) ? 'inline-block' : 'none';
 
   if (!open.length) {
     cont.innerHTML = state.blind
@@ -4914,6 +5117,43 @@ function cancelPendingOrder(posId) {
   redrawPositionLines();
   updateHotStats();
   showToast('已取消掛單', 'success');
+}
+
+// 一鍵平倉：把當前 scope 裡「按得動」的部位一次清乾淨
+// 只碰同標的同週期——理由同 confirmManualClose：拿別的商品的 K 棒平倉，
+// 會寫出價格與時間都錯亂的假交易，之後整份統計都不能信
+function closeAllPositions() {
+  const c = state.candles[state.cursorIndex];
+  if (!c) return;
+  const here = p => p.symbol === state.symbol && p.timeframe === state.timeframe;
+  const scoped = state.positions.filter(p => (p.status === 'open' || p.status === 'pending') && inScope(p));
+  const opens = scoped.filter(p => p.status === 'open' && here(p));
+  const pendings = scoped.filter(p => p.status === 'pending' && here(p));
+  const others = scoped.filter(p => !here(p));
+  if (!opens.length && !pendings.length) { showToast('目前沒有可一鍵處理的部位', 'error'); return; }
+  if (!confirm(`確定一鍵平倉？將以現價平掉 ${opens.length} 筆持倉、取消 ${pendings.length} 張掛單。此動作會寫入交易紀錄，無法復原。`)) return;
+  for (const p of opens) closePosition(p, c.close, '一鍵平倉', c.time, '一鍵平倉');
+  // 掛單直接移除、不留紀錄（未成交不算交易），比照 cancelPendingOrder
+  const dropIds = new Set(pendings.map(p => p.id));
+  if (dropIds.size) state.positions = state.positions.filter(x => !dropIds.has(x.id));
+  // 平倉視窗若正對著剛被清掉的部位，一併收掉，否則會留下一個按了沒反應的死視窗
+  if (_closeTargetId && (dropIds.has(_closeTargetId) || opens.some(p => p.id === _closeTargetId))) {
+    $('close-modal').classList.remove('show');
+    _closeTargetId = null;
+  }
+  saveStorage();
+  // 整批跑完才重繪一次：逐筆重繪在十幾筆部位時會明顯卡頓
+  renderPositions();
+  renderTrades();
+  renderReport();
+  updateHotStats();
+  redrawPositionLines();
+  showToast(`✓ 已平倉 ${opens.length} 筆、取消 ${pendings.length} 張掛單`
+    + (others.length ? `；另有 ${others.length} 筆在其他標的，切換過去才能處理` : ''), 'success');
+  // 熔斷同樣只跑一次：批次一次產生多筆虧損，逐筆檢查會連彈好幾個 modal
+  // didClose 口徑比照 checkPositionTriggers——取消掛單不是平倉，不該觸發熔斷
+  // 爆倉優先：已經出局就不必再提醒連敗
+  if (!checkBlowUp() && opens.length) checkLossStreak();
 }
 
 // 進場後補設停損/停利：先放預設位置，再讓使用者到圖上拖曳調整
@@ -5041,7 +5281,7 @@ function confirmManualClose() {
   updateHotStats();
   redrawPositionLines();
   showToast(_closeFrac < 0.999 ? `✓ 已部分平倉 ${Math.round(_closeFrac * 100)}%，剩餘續抱` : '✓ 已平倉', 'success');
-  checkLossStreak();
+  if (!checkBlowUp()) checkLossStreak();   // 爆倉優先：已經出局就不必再提醒連敗
 }
 
 function closePosition(p, exitPrice, exitReason, exitTime, exitNote) {
@@ -5095,6 +5335,73 @@ function checkLossStreak() {
       `你已經<strong style="color:var(--danger-2);">連續虧損 ${n} 筆</strong>——先停一下。`;
     $('fuse-modal').classList.add('show');
   }
+}
+
+// ---------- 餘額歸零強制出局（爆倉） ----------
+// 已宣告出局的 scope，依 fuseScopeKey() 分開記（比照 _fuseNotified，盲測輪與自由模式互不汙染）
+let _blownUp = {};
+// 「這輪曾經有錢」：權益是全域的（起始資金 + 全部已實現），一輪把錢燒光之後，
+// 下一輪開場的權益還是負的。少了這個閂，每開一輪新盲測都會在第一根 K 棒被判出局。
+// 所以只在「看過 > 0 才跌到 <= 0」時宣告；權益重新回正才重新上膛。
+let _blowUpArmed = false;
+function checkBlowUp() {
+  const key = fuseScopeKey();
+  if (_blownUp[key]) return false;
+  const eq = currentEquity();
+  // NaN 不是 <= 0：算不出權益（資料壞掉、部位欄位缺值）時寧可不判，
+  // 否則會用一個「畫面顯示 —」的數字把使用者判出局，怎麼解釋都解釋不通
+  if (!Number.isFinite(eq.total)) return false;
+  if (eq.total > 0) { _blowUpArmed = true; return false; }
+  if (!_blowUpArmed) return false;          // 開場就是負的 → 是上一輪的殘值，不重複宣告
+  _blownUp[key] = true;
+  _blowUpArmed = false;
+  stopPlay();
+  const b = state.blind;
+  const c = state.candles[state.cursorIndex];
+  let closed = 0, cancelled = 0, others = 0;
+  if (b) {
+    // 盲測：finishBlindSession 本來就會取消掛單、把未平倉部位以現價平掉，
+    // 自己再平一次會重複寫紀錄，所以這裡只數數字給提示用，實際結算交給它
+    const scoped = state.positions.filter(p => p.blindId === b.id);
+    closed = scoped.filter(p => p.status === 'open').length;
+    cancelled = scoped.filter(p => p.status === 'pending').length;
+  } else {
+    // 自由模式沒有盲測輪可結算，自己清場；一樣不碰其他標的／週期（假交易問題同 closeAllPositions）
+    const here = p => p.symbol === state.symbol && p.timeframe === state.timeframe;
+    const scoped = state.positions.filter(p => (p.status === 'open' || p.status === 'pending') && inScope(p));
+    others = scoped.filter(p => !here(p)).length;
+    const opens = scoped.filter(p => p.status === 'open' && here(p));
+    const dropIds = new Set(scoped.filter(p => p.status === 'pending' && here(p)).map(p => p.id));
+    closed = opens.length;
+    cancelled = dropIds.size;
+    if (c) for (const p of opens) closePosition(p, c.close, '爆倉強制平倉', c.time, '餘額歸零強制出局');
+    if (dropIds.size) state.positions = state.positions.filter(x => !dropIds.has(x.id));
+  }
+  if (_closeTargetId) {                     // 部位已被清掉，開著的平倉視窗會變成死視窗
+    $('close-modal').classList.remove('show');
+    _closeTargetId = null;
+  }
+  if (b) {
+    finishBlindSession('爆倉出局', { blownUp: true });   // 內含清場、揭曉、寫入 blindHistory
+  } else {
+    saveStorage();
+    renderPositions();
+    renderTrades();
+    renderReport();
+    updateHotStats();
+    redrawPositionLines();
+  }
+  // 數字在清場之後才取：浮虧這時已經變成已實現，
+  // 否則會出現「餘額 -1 元、起始 10 萬、已實現 0」這種怎麼加都對不起來的三個數字
+  const eqAfter = currentEquity();
+  $('blowup-body').innerHTML =
+    `你的<strong>餘額只剩 ${escHtml(fmtMoney(eqAfter.total))}</strong>——<strong style="color:var(--danger-2);">錢輸光了，本輪結束</strong>。<br>`
+    + `起始資金 ${escHtml(fmtMoney(eqAfter.balance))}，已實現盈虧 ${escHtml(fmtMoney(eqAfter.realized))}。<br>`
+    + `已強制平掉 ${closed} 筆持倉、取消 ${cancelled} 張掛單。`
+    + (others ? `<br>另有 ${others} 筆在其他標的，切換過去才能處理。` : '');
+  $('fuse-modal').classList.remove('show');   // 爆倉的優先級高於連敗提醒，不要兩個視窗疊著
+  $('blowup-modal').classList.add('show');
+  return true;
 }
 
 // ---------- Trade list ----------
@@ -5227,7 +5534,7 @@ function renderBlindHistoryHTML() {
     const wr = s.winRate == null ? '—' : s.winRate.toFixed(0) + '%';
     return `<tr>
       <td>${fmtDateTime(Math.floor(s.finishedAt / 1000), '1d')}</td>
-      <td>${escHtml(info.name)}</td>
+      <td>${s.blownUp ? '💀 ' : ''}${escHtml(info.name)}</td>
       <td class="num">${s.longs}多 / ${s.shorts}空</td>
       <td class="num">${wr}</td>
       <td class="num" style="color:${s.totalPnl >= 0 ? 'var(--accent-2)' : 'var(--danger-2)'}">${fmtMoney(s.totalPnl)}</td>
@@ -5375,7 +5682,10 @@ function buildInsightHTML(trades) {
 }
 
 // ---------- Hot stats ----------
-function updateHotStats() {
+// 帳戶權益的唯一算法：起始資金 + 已實現 + 未實現
+// 抽出來是因為爆倉判定要用它：判定出局的數字必須跟畫面右上角那個「餘額」是同一個來源，
+// 否則會出現「畫面明明還有錢卻被判出局」這種無法對使用者解釋的狀況
+function currentEquity() {
   const balance = state.settings.balance;
   const realized = state.trades.reduce((s, t) => s + (t.pnl || 0), 0);
   const c = state.candles[state.cursorIndex];
@@ -5388,7 +5698,14 @@ function updateHotStats() {
       unreal += (c.close - p.entryPrice) * dir * posPV(p) * p.size;
     }
   }
-  const total = balance + realized + unreal;
+  return { balance, realized, unreal, total: balance + realized + unreal };
+}
+
+function updateHotStats() {
+  const { realized, unreal, total } = currentEquity();
+  // 畫面上顯示過有錢，爆倉判定才上膛（見 _blowUpArmed）——包含重整後第一次繪製，
+  // 否則帶著浮虧部位重整進來、下一根就歸零的情境會漏判
+  if (Number.isFinite(total) && total > 0) _blowUpArmed = true;
   $('hs-balance').textContent = fmtMoney(total);
   $('hs-realized').textContent = fmtMoney(realized);
   $('hs-realized').style.color = realized >= 0 ? 'var(--accent-2)' : 'var(--danger-2)';
@@ -5957,9 +6274,12 @@ function finishBlindSession(endReason, opts = {}) {
     avgLossR: lossR.length ? +(-(grossLossR / lossR.length)).toFixed(2) : null,
     rCurve,
   };
+  // 爆倉收場要留痕：歷史列表若只看盈虧，看不出這輪是「被打到出局」還是「正常跑完」
+  if (opts.blownUp) summary.blownUp = true;
   if (!opts.skipHistory) state.blindHistory.unshift(summary);
   delete state.drawings[`blind_${b.id}`];   // 盲測畫線用完即丟
   delete _fuseNotified[b.id];               // 該輪的熔斷計數一起收掉，不留殘值
+  delete _blownUp[b.id];                    // 同理：輪次結束，爆倉旗標不留殘值
   state.blind = null;
   saveStorage();
   showBlindResult(summary, opts.skipHistory);
@@ -6024,7 +6344,7 @@ function showBlindResult(s, wasAbandoned) {
     </div>` : '';
   $('blind-result-body').innerHTML = `
     <div class="blind-reveal">
-      <div class="blind-reveal-sym">🎯 ${escHtml(info.name)}</div>
+      <div class="blind-reveal-sym">${s.blownUp ? '💀' : '🎯'} ${escHtml(info.name)}${s.blownUp ? '（爆倉出局）' : ''}</div>
       <div class="blind-reveal-meta">${escHtml(catLabel)} · ${s.timeframe === '1d' ? '日線' : '1 小時'} · ${period}（${s.barsPlayed} 根）</div>
     </div>
     <div class="perf-grid">
@@ -6083,6 +6403,9 @@ function wireEvents() {
 
   // Side tabs
   $$('.side-tabs button').forEach(b => b.addEventListener('click', () => switchSidePane(b.dataset.pane)));
+
+  // 一鍵平倉（持倉中標題列）
+  $('btn-close-all').addEventListener('click', closeAllPositions);
 
   // Order side
   $$('.order-side-toggle button').forEach(b => b.addEventListener('click', () => setOrderSide(b.dataset.orderSide)));
@@ -6186,6 +6509,7 @@ async function bootApp() {
   await loadSymbolManifest();
   if (!SYMBOLS[state.symbol]) state.symbol = Object.keys(SYMBOLS)[0];
   $('set-balance').value = state.settings.balance;
+  initPaneResizer();   // 要在 initChart 前：圖表建立當下就吃到還原後的側欄寬度，省一次 resize
   initChart();
   initDrawCanvas();
   initDragSLTP();
