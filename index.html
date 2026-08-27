@@ -26,6 +26,71 @@
     },
   });
 
+  // ---- 全站推薦連結 — 協定 v1（正本在主站 src/lib/referral.mjs）----
+  // cookie ark_ref / Domain=.ark-blueprint.com / 90 天 / first-touch。
+  // 五個入口各一份實作，改規格要五處同改。
+  const REF_COOKIE = 'ark_ref';
+  const REF_MAX_AGE = 60 * 60 * 24 * 90;
+  const ROOT_DOMAIN = 'ark-blueprint.com';
+
+  const normRef = (raw) => {
+    if (typeof raw !== 'string') return null;
+    const v = raw.trim().toLowerCase();
+    return /^[a-z0-9][a-z0-9-]{2,39}$/.test(v) ? v : null;
+  };
+  const refDomain = () => {
+    const h = location.hostname.toLowerCase();
+    return (h === ROOT_DOMAIN || h.endsWith('.' + ROOT_DOMAIN)) ? '.' + ROOT_DOMAIN : null;
+  };
+  const readRef = () => {
+    for (const chunk of document.cookie.split(';')) {
+      const eq = chunk.indexOf('=');
+      if (eq < 0 || chunk.slice(0, eq).trim() !== REF_COOKIE) continue;
+      try { const v = normRef(decodeURIComponent(chunk.slice(eq + 1).trim())); if (v) return v; }
+      catch (e) { /* 壞值當作沒有 */ }
+    }
+    try { return normRef(localStorage.getItem(REF_COOKIE)); } catch (e) { return null; }
+  };
+  const clearRef = () => {
+    const d = refDomain();
+    try {
+      const parts = [REF_COOKIE + '=', 'Path=/', 'Max-Age=0'];
+      if (d) parts.push('Domain=' + d);
+      document.cookie = parts.join('; ');
+    } catch (e) { /* noop */ }
+    try { localStorage.removeItem(REF_COOKIE); } catch (e) { /* noop */ }
+  };
+
+  // 落地即捕捉（first-touch：已有值不覆寫）
+  try {
+    const code = normRef(new URLSearchParams(location.search).get('ref'));
+    if (code && !readRef()) {
+      const d = refDomain();
+      const parts = [REF_COOKIE + '=' + encodeURIComponent(code), 'Path=/',
+                     'Max-Age=' + REF_MAX_AGE, 'SameSite=Lax'];
+      if (d) parts.push('Domain=' + d);
+      if (location.protocol === 'https:') parts.push('Secure');
+      try { document.cookie = parts.join('; '); } catch (e) { /* cookie 被封鎖 */ }
+      try { localStorage.setItem(REF_COOKIE, code); } catch (e) { /* 放棄 */ }
+    }
+  } catch (e) { /* 捕捉失敗不影響練功房本身 */ }
+
+  // 有 session 時上報歸屬。fire-and-forget，任何失敗都不擋登入。
+  // 'ineligible' 不清 cookie — 連結可能是在別人已登入的瀏覽器被打開。
+  const refAttempted = new Set();
+  window.arkReportReferral = async function () {
+    const code = readRef();
+    if (!code || refAttempted.has(code) || !window.sb) return;
+    refAttempted.add(code);
+    try {
+      const { data, error } = await window.sb.rpc('crm_report_my_referral', {
+        p: { ref_code: code, landing_app: 'sim' },
+      });
+      if (error) { refAttempted.delete(code); return; }
+      if (data === 'recorded' || data === 'already') clearRef();
+    } catch (e) { refAttempted.delete(code); }
+  };
+
   // Notify the main script that Supabase is ready
   window.dispatchEvent(new Event('supabase-ready'));
 </script>
@@ -5627,6 +5692,9 @@ function setupAuthListener() {
   if (!window.sb) return;
   window.sb.auth.onAuthStateChange((event, session) => {
     if (session && session.user) {
+      // 歸屬上報早於會員檢查：非會員新註冊者也要留下歸屬，他日後付費時
+      // 推薦人才算數。fire-and-forget，不擋登入。
+      if (window.arkReportReferral) window.arkReportReferral();
       // 登入成功 / 頁面重整已有 session / magic link 回跳 — 都走會員檢查 + 載入
       handleAuthSuccess(session.user);
     }
