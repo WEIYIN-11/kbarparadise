@@ -451,6 +451,10 @@ input, textarea { user-select: text; }
   flex: 1;
   position: relative;
   min-height: 0;
+  /* 一定要裁切：lightweight-charts 的畫布是實體 DOM 元素，尺寸只要一時比容器大
+     （轉螢幕方向、網址列收合、漏接一次 resize），就會整片壓在側欄上面，
+     手指點「一鍵平倉」會打到圖表畫布而不是按鈕，而且完全沒有錯誤訊息 */
+  overflow: hidden;
 }
 #chart { position: absolute; inset: 0; }
 #draw-canvas {
@@ -703,7 +707,15 @@ body.pane-resizing.row { cursor: row-resize; }
   letter-spacing: 0;
   white-space: nowrap;
   flex: 0 0 auto;
-  min-height: 26px;          /* 手機上要摸得到 */
+  min-height: 26px;
+  position: relative;
+}
+/* 視覺維持 26px（撐高標題列會擠掉圖表），但實際可點範圍外擴到 44x92：
+   橫向只吃掉與標題之間的 8px 間隙，不會蓋到「持倉中」文字 */
+.btn-close-all::after {
+  content: '';
+  position: absolute;
+  inset: -9px -6px;
 }
 .btn-close-all:hover { background: var(--danger); color: #fff; }
 .order-side-toggle {
@@ -2397,6 +2409,9 @@ function initChart() {
   // 這裡不能只 applyOptions({})：lightweight-charts v4 沒開 autoSize 時 applyOptions 不碰尺寸，
   // 圖表會一直停在建立當下的寬高，價格↔座標換算跟著失準（畫線就會整條偏掉）
   window.addEventListener('resize', syncPaneChartSizes);
+  // iOS Safari 轉向時 resize 事件時機不可靠（常常在版面還沒定案時就發），
+  // 補一次延遲同步，否則轉向後畫布會停在舊尺寸溢出到側欄上
+  window.addEventListener('orientationchange', () => setTimeout(syncPaneChartSizes, 250));
 }
 
 // ============================================================
@@ -2406,6 +2421,7 @@ const PANE_DEFAULT = { width: 340, height: 280 };
 // minChart：圖表區的絕對下限，視窗窄到放不下時它優先於 side 的 min/max
 const PANE_LIMIT = { minW: 260, maxW: 620, minChart: 320, minH: 160, maxHRatio: 0.7 };
 let _paneRaf = 0;
+let _syncingPanes = false;
 
 // 900px 是 .main 由 row 轉 column 的斷點；用 matchMedia 讀同一個門檻，避免兩邊各寫一份數字
 function isPaneColumn() {
@@ -2441,6 +2457,14 @@ function applyPaneVars() {
 // 版面尺寸一動就得把圖表拉回容器大小，否則 priceToCoordinate 還在用舊寬高，畫線座標會跑掉
 function syncPaneChartSizes() {
   if (!chart) return;
+  _syncingPanes = true;
+  try {
+    syncPaneChartSizesInner();
+  } finally {
+    _syncingPanes = false;
+  }
+}
+function syncPaneChartSizesInner() {
   // 第三個參數 forceRepaint 一定要 true：不給的話 v4 只改外層 div 的 style，
   // 內部畫布與價格軸要等下一次 rAF 才跟上，而下面的 redrawDrawings() 會先用到舊的
   // priceToCoordinate，畫出來的線就會整條偏掉一幀（甚至沒有下一次重畫就永久偏）
@@ -3144,10 +3168,12 @@ function initDrawCanvas() {
   drawCanvas = $('draw-canvas');
   drawCtx = drawCanvas.getContext('2d');
   resizeDrawCanvas();
-  // Resize observer
+  // Resize observer：改成走 syncPaneChartSizes()，讓圖表尺寸由「容器實際大小」驅動。
+  // 原本只重畫 draw-canvas、沒有 resize 主圖表，所以任何沒有伴隨 window resize 事件的
+  // 容器變化（iOS 轉向後的延遲、網址列收合、側欄拖曳）都會留下一張比容器大的畫布。
   const ro = new ResizeObserver(() => {
-    resizeDrawCanvas();
-    redrawDrawings();
+    if (_syncingPanes) return;   // resize 圖表不會改到 .chart-wrap，但別讓 RO 自我遞迴
+    syncPaneChartSizes();
   });
   ro.observe(drawCanvas.parentElement);
 
