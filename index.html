@@ -419,6 +419,20 @@ input, textarea { user-select: text; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
+.back-ark {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  color: var(--text-2);
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 13px;
+  white-space: nowrap;
+  text-decoration: none;
+  transition: color .12s, border-color .12s;
+}
+.back-ark:hover { color: var(--text); border-color: var(--accent-2); }
+
 .hot-stat {
   display: flex; gap: 14px; font-size: 12px;
 }
@@ -1348,6 +1362,8 @@ body.pane-resizing.row { cursor: row-resize; }
       <img id="user-avatar" alt="">
       <span class="nm" id="user-name">—</span>
     </div>
+
+    <a class="back-ark" href="https://ark-blueprint.com" title="回方舟藍圖主站">&larr; 方舟藍圖</a>
   </div>
 
   <!-- Main: chart + side panel -->
