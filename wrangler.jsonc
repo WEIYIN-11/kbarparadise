@@ -19,5 +19,12 @@
     "not_found_handling": "none"
   },
   "observability": { "enabled": true },
+  // 正式網域(Custom Domain):wrangler deploy 會自動在 Cloudflare DNS 建/改
+  // 該主機名的記錄並簽憑證,不用手動進 DNS 頁。
+  // zone_name 必填:少了它 API 回 10082「Can't infer zone from route」(2026-09-23 實測)。
+  "routes": [
+    { "pattern": "sim.ark-blueprint.com", "custom_domain": true, "zone_name": "ark-blueprint.com" }
+  ],
+
   "workers_dev": true
 }
