@@ -1,0 +1,33 @@
+# 練功房部署 → Cloudflare Workers(取代搬家前的 Vercel git 整合)。
+#
+# 沒有 build:repo 根目錄就是站台。data/ 已納入版控(約 29 MB,單檔最大 6 MB,
+# Workers 單檔上限 25 MiB),更新標的資料仍是 `npm run fetch` → commit → push。
+#
+# 需要的 secrets:CLOUDFLARE_API_TOKEN(Workers Scripts:Edit)、CLOUDFLARE_ACCOUNT_ID。
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy

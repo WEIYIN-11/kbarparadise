@@ -1,0 +1,19 @@
+# 不該被當成公開靜態資產上傳的東西(Workers Static Assets 讀這個檔,語法同 .gitignore)。
+# 搬家前 Vercel 也是整個 repo 根目錄當站台根,scripts/ 等同樣是公開的 —— 這裡順手收緊。
+.git
+.github
+.firebase
+.wrangler
+node_modules
+scripts
+firebase.json
+firestore.rules
+.firebaserc*
+package.json
+package-lock.json
+README.md
+wrangler.jsonc
+.assetsignore
+.gitignore
+*.log
+*.md

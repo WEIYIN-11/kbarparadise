@@ -1,0 +1,17 @@
+# Cloudflare Workers Static Assets 的回應標頭(搬家前住在 vercel.json 的 headers)。
+# 同名標頭在 _headers 是疊加不是覆蓋,所以 /data/* 先用 `!` 拔掉繼承的 Cache-Control。
+
+/*
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+
+/index.html
+  Cache-Control: no-cache, no-store, must-revalidate
+
+/
+  Cache-Control: no-cache, no-store, must-revalidate
+
+/data/*
+  ! Cache-Control
+  Cache-Control: public, max-age=86400
