@@ -9,6 +9,11 @@
     "fetch:btc": "node scripts/fetch-data.mjs btc",
     "fetch:nq": "node scripts/fetch-data.mjs nq",
     "fetch:txf": "node scripts/fetch-data.mjs txf",
-    "serve": "npx http-server . -p 8081 -c-1"
+    "serve": "npx http-server . -p 8081 -c-1",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "prettier": "^3.9.9"
   }
 }

@@ -1,0 +1,20 @@
+# 第三方壓縮檔：不是我們的程式碼，重排會讓之後升級版本時 diff 完全不可讀
+vendor/
+
+# 28MB 的 K 棒資料，不是程式碼
+data/
+
+# 產出物與其他 session 的 worktree
+node_modules/
+package-lock.json
+.claude/
+.wrangler/
+.firebase/
+.vercel/
+
+# 快照工具的固定測試資料：每次重新產生都會被重排，徒增 diff
+tools/visual-baseline/fixture.json
+
+# 部署設定檔：Prettier 會在 jsonc 補尾逗號。wrangler 的解析器大概吃得下,
+# 但賭它沒有任何好處 —— 排版換不到可讀性,解析失敗卻會讓全站上不了線。
+wrangler.jsonc
