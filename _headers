@@ -15,3 +15,8 @@
 /data/*
   ! Cache-Control
   Cache-Control: public, max-age=86400
+
+# index.html 是 no-store,但它載入的樣式與模組若被快取,部署後會出現
+# 「新的 HTML 配舊的 JS」—— 兩邊必須同進同退。
+/src/*
+  Cache-Control: no-cache, no-store, must-revalidate
