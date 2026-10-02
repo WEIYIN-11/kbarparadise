@@ -17,7 +17,6 @@ const fmtPrice = (n) => {
   if (n == null || isNaN(n)) return '—';
   return n.toFixed(priceDp(Math.abs(n)));
 };
-const fmtPct = (n) => (n == null || isNaN(n) ? '—' : (n >= 0 ? '+' : '') + n.toFixed(2) + '%');
 const fmtR = (n) => (n == null || isNaN(n) ? '—' : (n >= 0 ? '+' : '') + n.toFixed(2) + 'R');
 const escHtml = (s) =>
   String(s ?? '').replace(

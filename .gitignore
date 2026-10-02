@@ -13,3 +13,6 @@ data/registry-cache.json
 
 # wrangler dev 的本機狀態
 .wrangler/
+
+# 本機快照輸出
+.snapshots/

@@ -85,19 +85,92 @@
 ## 開發指令
 
 ```bash
-# 抓取最新歷史資料
-npm run fetch
+npm install          # 開發工具（Prettier / ESLint），不影響上線內容
 
-# 本機啟動（需 Node）
-npm run serve
-# 開 http://localhost:8081
+npm run serve        # 本機啟動 → http://localhost:8081
+npm run fetch        # 抓取最新歷史資料
+
+npm run check        # = lint + 格式檢查，提交前跑這個
+npm run format       # 自動排版
+npm run lint         # 只跑 ESLint
 ```
 
-## 部署（Vercel，git push 自動部署）
+測試需要先開著本機伺服器（預設讀 `http://127.0.0.1:8234`，見
+`tools/visual-baseline/snap.py` 的 `BASE_URL`）：
 
-- 正式站：`https://sim.ark-blueprint.com`（Vercel 專案連結本 repo，push main 即自動部署）
-- `data/` 已納入版控（Vercel 從 git 部署）；更新標的資料：`npm run fetch` → commit → push
-- 舊站 `https://trianingground.web.app`（Firebase Hosting）保留過渡期，可手動 `npx firebase-tools deploy --only hosting` 同步
+```bash
+npm run test:smoke   # 真實點擊走一遍下單→前進→平倉→績效→畫線
+npm run test:visual  # 拍 26 張快照，再用 --compare 跟改動前比對
+```
+
+## 程式碼結構
+
+```
+index.html              只有 HTML 結構，不含任何樣式與邏輯
+src/
+  styles.css            全站樣式
+  auth-bootstrap.js     Supabase client、跨子網域共用 session、推薦碼捕捉
+  constants.js          共用常數 + store（跨模組共享的可變狀態）
+  state.js              state 物件（畫面與交易的當下狀態）
+  util.js               格式化與小工具
+  storage.js            localStorage 存取
+  data.js               K 棒載入
+  chart.js              圖表建立、版面分隔線、圖表類型
+  indicators.js         技術指標計算與繪製
+  drawings.js           畫線工具（canvas overlay）
+  position-tools.js     SL/TP 線拖曳、繪圖選取與拖曳
+  replay.js             回放與 SL/TP 觸發
+  orders.js             下單、持倉管理、連敗熔斷、爆倉
+  trades.js             交易紀錄、回放檢討、績效、側欄分頁
+  auth.js               登入與雲端同步、設定
+  blind.js              盲測模式
+  templates.js          畫線樣板 UI
+  app.js                事件接線、登入流程、開機（進入點）
+vendor/                 第三方程式庫（自架，勿改）
+tools/                  開發用檢查工具，不會上傳到網站
+data/                   K 棒資料（約 28MB，已納入版控）
+```
+
+### 動這份程式碼要遵守的規則
+
+- **共享的可變狀態只放兩個地方**：畫面與交易的當下狀態放 `state.js` 的
+  `state`；會被「不同模組」重新賦值的放 `constants.js` 的 `store`。ES module
+  的 import 是唯讀綁定，直接寫 `X = v` 會在執行時報錯。只在自己模組內改值的
+  變數不要放進 `store` —— `export let` 的綁定是即時的，其他模組 import 後讀
+  得到新值，否則 `store` 會退化成第二個全域命名空間。
+
+- **跨模組 import 進來的東西只能在函式體內用，不能在模組載入當下使用**。
+  模組之間有循環相依（下單要重畫紀錄、回放會觸發平倉，領域邏輯本身就互相
+  呼叫）。循環在 ES module 下只有在「載入期不去碰對方」時才安全。
+
+- **寫進 `innerHTML` 的動態文字一律過 `escHtml()`**，特別是使用者輸入的
+  策略標籤與進場理由。
+
+- **第三方程式庫只能從 `vendor/` 載入，不要改回 CDN**。這一頁的任何腳本都
+  讀得到跨子網域共用的登入 cookie，CDN 被下毒等於一次拿到四站所有會員的
+  session。升級版本＝重新下載整包放進 `vendor/` 並改檔名。
+
+- **`index.html` 與 `src/` 必須同進同退**。兩者在 `_headers` 都設成 no-store，
+  不要給 `src/` 加快取，否則部署後會出現「新的 HTML 配舊的 JS」。
+
+- **不能用 `wrangler dev` 預覽**。資產目錄是 `.`，wrangler 會把暫存檔寫進
+  同一個目錄觸發無限重載（2026-09-23 實測 2 分鐘 786 次）。要驗證就
+  `wrangler deploy` 到 workers.dev 預覽網址看。
+
+- **`wrangler.jsonc` 不給 Prettier 排版**（已在 `.prettierignore`）。Prettier
+  會在 jsonc 補尾逗號，排版換不到可讀性，解析失敗卻會讓全站上不了線。
+
+- **改完跑 `npm run check`，有畫面風險的改動再跑 `npm run test:visual` 比對**。
+
+## 部署（Cloudflare Workers Static Assets，git push 自動部署）
+
+- 正式站：`https://sim.ark-blueprint.com`（GitHub Actions → `wrangler deploy`，
+  push main 即自動部署；設定見 `wrangler.jsonc` 與 `.github/workflows/deploy.yml`）
+- repo 根目錄就是站台根目錄；哪些檔不該上傳看 `.assetsignore`，回應標頭看 `_headers`
+- `data/` 已納入版控；更新標的資料：`npm run fetch` → commit → push
+- 舊站 `https://trianingground.web.app`（Firebase Hosting）仍在線上（目前回 301），
+  `firebase.json` / `firestore.rules` 留著是為了它；需要時手動
+  `npx firebase-tools deploy --only hosting` 同步
 
 ### 2. Supabase 一次性設定（主站專案 `bvmeeupxhbrwtrmuyhqq`）
 

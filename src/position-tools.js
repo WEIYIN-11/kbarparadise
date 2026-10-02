@@ -376,7 +376,6 @@ function initDragSLTP() {
       // 3) Click on empty area while in cursor mode → deselect
       if (state.selectedDrawingId) {
         // Wait until mouseup to deselect to allow chart pan still
-        const wasSelected = state.selectedDrawingId;
         const onUp = (upE) => {
           const dx = Math.abs(upE.clientX - e.clientX);
           const dy = Math.abs(upE.clientY - e.clientY);

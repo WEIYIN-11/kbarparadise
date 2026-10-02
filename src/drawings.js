@@ -411,7 +411,6 @@ function drawShape(d, isPreview) {
     lineStyle: 0,
     label: '',
   };
-  const color = style.color;
   const selected = d.id && d.id === state.selectedDrawingId;
   drawCtx.save();
   drawCtx.globalAlpha = isPreview ? 0.6 : 1;
@@ -694,8 +693,7 @@ function drawLabelChip(text, x, y, color, align) {
   if (!text) return;
   drawCtx.save();
   drawCtx.font = '11px -apple-system, sans-serif';
-  const padX = 5,
-    padY = 2;
+  const padX = 5;
   const tw = drawCtx.measureText(text).width;
   const w = tw + padX * 2;
   const h = 16;
