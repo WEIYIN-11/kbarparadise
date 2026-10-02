@@ -56,7 +56,20 @@ PRELUDE = """
 // 主程式是 ES module,宣告不會掛到全域,只能用 dynamic import 取回模組命名空間。
 // 模組已被頁面載入過,再 import 同一個 URL 拿到的是同一份實例(模組快取),
 // 所以讀寫到的就是 app 正在用的那份狀態。
-window.__m = () => import('/src/main.js');
+// 每個名稱向真正的擁有模組取用。import 同一個 URL 拿到的是頁面已載入的那份
+// 實例(模組快取),所以讀寫到的就是 app 正在用的狀態。
+window.__m = async () => {
+  const [state, auth, app, trades, orders, drawings, chart] = await Promise.all([
+    import('/src/state.js'),
+    import('/src/auth.js'),
+    import('/src/app.js'),
+    import('/src/trades.js'),
+    import('/src/orders.js'),
+    import('/src/drawings.js'),
+    import('/src/chart.js'),
+  ]);
+  return { ...state, ...auth, ...app, ...trades, ...orders, ...drawings, ...chart };
+};
 window.__snapBoot = async () => {
   const m = await window.__m();
   m.hideLogin();
