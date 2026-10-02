@@ -6,6 +6,7 @@
 .wrangler
 node_modules
 scripts
+tools
 firebase.json
 firestore.rules
 .firebaserc*

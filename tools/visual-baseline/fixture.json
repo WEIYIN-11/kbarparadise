@@ -1,0 +1,215 @@
+{
+ "trades": {
+  "trades": [
+   {
+    "id": "fx-t1",
+    "symbol": "NQ",
+    "timeframe": "1h",
+    "side": "long",
+    "status": "closed",
+    "entryPrice": 20057.25,
+    "entryTime": 1743012000,
+    "exitPrice": 20136.25,
+    "exitTime": 1743044400,
+    "size": 1,
+    "stopLoss": 20050,
+    "takeProfit": 20146.25,
+    "riskAmount": 1000,
+    "riskPct": 1,
+    "strategyTag": "回測",
+    "pnl": -1000,
+    "pnlPts": -50,
+    "rMultiple": -1,
+    "exitReason": "提前砍單停損",
+    "exitNote": "",
+    "blindId": null
+   },
+   {
+    "id": "fx-t2",
+    "symbol": "NQ",
+    "timeframe": "1h",
+    "side": "short",
+    "status": "closed",
+    "entryPrice": 20048,
+    "entryTime": 1743087600,
+    "exitPrice": 19984,
+    "exitTime": 1743120000,
+    "size": 1,
+    "stopLoss": 20040.5,
+    "takeProfit": 20193.75,
+    "riskAmount": 1000,
+    "riskPct": 1,
+    "strategyTag": "轉折",
+    "pnl": -1000,
+    "pnlPts": -50,
+    "rMultiple": -1,
+    "exitReason": "提前砍單停損",
+    "exitNote": "",
+    "blindId": null
+   },
+   {
+    "id": "fx-t3",
+    "symbol": "NQ",
+    "timeframe": "1h",
+    "side": "long",
+    "status": "closed",
+    "entryPrice": 19863.75,
+    "entryTime": 1743163200,
+    "exitPrice": 19371.25,
+    "exitTime": 1743192000,
+    "size": 1,
+    "stopLoss": 19863.25,
+    "takeProfit": 19955.25,
+    "riskAmount": 1000,
+    "riskPct": 1,
+    "strategyTag": "突破",
+    "pnl": -1000,
+    "pnlPts": -50,
+    "rMultiple": -1,
+    "exitReason": "提前砍單停損",
+    "exitNote": "",
+    "blindId": null
+   },
+   {
+    "id": "fx-t4",
+    "symbol": "NQ",
+    "timeframe": "1h",
+    "side": "long",
+    "status": "closed",
+    "entryPrice": 19196,
+    "entryTime": 1743411600,
+    "exitPrice": 19222.75,
+    "exitTime": 1743440400,
+    "size": 1,
+    "stopLoss": 19163.5,
+    "takeProfit": 19227.75,
+    "riskAmount": 1000,
+    "riskPct": 1,
+    "strategyTag": "回測",
+    "pnl": 2400,
+    "pnlPts": 120,
+    "rMultiple": 2.4,
+    "exitReason": "提前獲利了結",
+    "exitNote": "",
+    "blindId": null
+   },
+   {
+    "id": "fx-t5",
+    "symbol": "NQ",
+    "timeframe": "1h",
+    "side": "short",
+    "status": "closed",
+    "entryPrice": 19429.75,
+    "entryTime": 1743487200,
+    "exitPrice": 19516,
+    "exitTime": 1743516000,
+    "size": 1,
+    "stopLoss": 19349.75,
+    "takeProfit": 19436.5,
+    "riskAmount": 1000,
+    "riskPct": 1,
+    "strategyTag": "轉折",
+    "pnl": 1100,
+    "pnlPts": 55,
+    "rMultiple": 1.1,
+    "exitReason": "提前獲利了結",
+    "exitNote": "",
+    "blindId": null
+   },
+   {
+    "id": "fx-t6",
+    "symbol": "NQ",
+    "timeframe": "1h",
+    "side": "long",
+    "status": "closed",
+    "entryPrice": 19570,
+    "entryTime": 1743562800,
+    "exitPrice": 19428.75,
+    "exitTime": 1743591600,
+    "size": 1,
+    "stopLoss": 19561,
+    "takeProfit": 19588.75,
+    "riskAmount": 1000,
+    "riskPct": 1,
+    "strategyTag": "突破",
+    "pnl": -600,
+    "pnlPts": -30,
+    "rMultiple": -0.6,
+    "exitReason": "提前砍單停損",
+    "exitNote": "",
+    "blindId": null
+   }
+  ],
+  "positions": [
+   {
+    "id": "fx-p1",
+    "symbol": "NQ",
+    "timeframe": "1h",
+    "side": "long",
+    "status": "open",
+    "entryPrice": 19744.5,
+    "entryTime": 1743613200,
+    "size": 2,
+    "stopLoss": 19547.06,
+    "takeProfit": 20139.39,
+    "riskAmount": 1500,
+    "riskPct": 1.5,
+    "strategyTag": "順勢",
+    "blindId": null,
+    "reason": "前高突破回測不破"
+   },
+   {
+    "id": "fx-p2",
+    "symbol": "NQ",
+    "timeframe": "1h",
+    "side": "short",
+    "status": "pending",
+    "entryPrice": 19141.01,
+    "entryTime": 1743631200,
+    "size": 1,
+    "stopLoss": 19330.53,
+    "takeProfit": 18572.47,
+    "riskAmount": 800,
+    "riskPct": 0.8,
+    "strategyTag": "區間操作",
+    "blindId": null,
+    "reason": ""
+   }
+  ]
+ },
+ "settings": {
+  "balance": 100000,
+  "sideWidth": 340,
+  "sideHeight": 280
+ },
+ "drawings": {
+  "NQ_1h": [
+   {
+    "id": "fx-d1",
+    "type": "hline",
+    "color": "#3b82f6",
+    "points": [
+     {
+      "time": 1743487200,
+      "price": 19436.5
+     }
+    ]
+   },
+   {
+    "id": "fx-d2",
+    "type": "rect",
+    "color": "#f59e0b",
+    "points": [
+     {
+      "time": 1743523200,
+      "price": 19644
+     },
+     {
+      "time": 1743598800,
+      "price": 19316.5
+     }
+    ]
+   }
+  ]
+ }
+}
