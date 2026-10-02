@@ -35,12 +35,30 @@ const BUILTIN_SYMBOLS = {
     tfs: ['1d', '1h'],
   },
 };
-let SYMBOLS = { ...BUILTIN_SYMBOLS };
-let CATEGORY_LABELS = { futures: '期指', crypto: '加密貨幣', us: '美股', tw: '台股' };
+// 會被多個區塊重新賦值的共享狀態。拆成模組之後 import 進來的是唯讀綁定，
+// 不能直接 X = v，所以集中成一個物件用 store.X 存取；誰在改共享狀態也因此
+// 一眼看得出來。只放「跨區塊被改寫」的，單一區塊內部自己用的仍留在原地。
+const store = {
+  SYMBOLS: { ...BUILTIN_SYMBOLS },
+  CATEGORY_LABELS: { futures: '期指', crypto: '加密貨幣', us: '美股', tw: '台股' },
+  // 持倉在圖表上的價格線（每次重畫重建）
+  posLines: [],
+  // 圖表下單工具正在拖曳的把手：'entry' | 'sl' | 'tp'
+  posToolDrag: null,
+  // 平倉視窗正對著哪個部位，以及平倉比例（分批出場）
+  _closeTargetId: null,
+  _closeFrac: 1,
+  // 「這輪曾經有錢」：權益是全域的（起始資金 + 全部已實現），一輪把錢燒光之後，
+  // 下一輪開場的權益還是負的。少了這個閂，每開一輪新盲測都會在第一根 K 棒被判出局。
+  // 所以只在「看過 > 0 才跌到 <= 0」時宣告；權益重新回正才重新上膛。
+  _blowUpArmed: false,
+  // 登出的 promise：導向付費頁前要等它(最多 600ms)，否則 token 會殘留
+  _signOutPromise: null,
+};
 
 function symInfo(sym) {
   return (
-    SYMBOLS[sym] || {
+    store.SYMBOLS[sym] || {
       key: sym,
       name: sym,
       category: '',
@@ -577,9 +595,7 @@ async function loadCandles(symbol, timeframe) {
 }
 
 // ---------- Chart ----------
-let chart,
-  candleSeries,
-  posLines = [];
+let chart, candleSeries;
 // Track price lines for drag: posId -> { entry, sl, tp } (each is an IPriceLine)
 const posLineMap = new Map();
 
@@ -845,7 +861,7 @@ function applyChartType() {
     } catch {}
   }
   // 舊 series 的價位線已隨之銷毀
-  posLines = [];
+  store.posLines = [];
   posLineMap.clear();
   applyPriceFormat();
   $$('#ctype-seg button').forEach((b) => b.classList.toggle('active', b.dataset.ctype === t));
@@ -1999,9 +2015,8 @@ function syncFormToPosTool() {
   redrawDrawings();
 }
 
-let posToolDrag = null; // 'entry' | 'sl' | 'tp'
 function onPosToolDragMove(e) {
-  if (!posToolDrag || !state.posTool) return;
+  if (!store.posToolDrag || !state.posTool) return;
   const rect = $('chart').getBoundingClientRect();
   let price = candleSeries.coordinateToPrice(e.clientY - rect.top);
   if (price == null) return;
@@ -2010,12 +2025,12 @@ function onPosToolDragMove(e) {
   const f = Math.pow(10, dp);
   const eps = 1 / f;
   price = Math.round(price * f) / f;
-  if (posToolDrag === 'entry') {
+  if (store.posToolDrag === 'entry') {
     const delta = price - pt.entry; // 拖進場線 → 整組平移（TV 行為）
     pt.entry = +(pt.entry + delta).toFixed(dp);
     pt.sl = +(pt.sl + delta).toFixed(dp);
     pt.tp = +(pt.tp + delta).toFixed(dp);
-  } else if (posToolDrag === 'tp') {
+  } else if (store.posToolDrag === 'tp') {
     pt.tp = pt.side === 'long' ? Math.max(price, pt.entry + eps) : Math.min(price, pt.entry - eps);
   } else {
     pt.sl = pt.side === 'long' ? Math.min(price, pt.entry - eps) : Math.max(price, pt.entry + eps);
@@ -2024,7 +2039,7 @@ function onPosToolDragMove(e) {
   redrawDrawings();
 }
 function onPosToolDragEnd() {
-  posToolDrag = null;
+  store.posToolDrag = null;
   document.body.style.cursor = '';
   document.removeEventListener('mousemove', onPosToolDragMove);
   document.removeEventListener('mouseup', onPosToolDragEnd);
@@ -2737,12 +2752,12 @@ function toggleTimeAxis() {
 function redrawPositionLines() {
   if (!candleSeries) return;
   // Remove old（切換圖表類型後舊線已隨舊 series 銷毀，容錯處理）
-  posLines.forEach((l) => {
+  store.posLines.forEach((l) => {
     try {
       candleSeries.removePriceLine(l);
     } catch {}
   });
-  posLines = [];
+  store.posLines = [];
   posLineMap.clear();
   // Open positions for current symbol/tf (盲測 scope 過濾；含未成交掛單)
   const open = state.positions.filter(
@@ -2786,9 +2801,9 @@ function redrawPositionLines() {
         title: tpLineTitle(p, p.takeProfit, false),
       });
     }
-    posLines.push(entryLine);
-    if (slLine) posLines.push(slLine);
-    if (tpLine) posLines.push(tpLine);
+    store.posLines.push(entryLine);
+    if (slLine) store.posLines.push(slLine);
+    if (tpLine) store.posLines.push(tpLine);
     posLineMap.set(p.id, { entry: entryLine, sl: slLine, tp: tpLine });
   });
 }
@@ -3028,7 +3043,7 @@ function initDragSLTP() {
   const chartEl = $('chart');
   // Hover cursor feedback (only when not drawing and not already dragging)
   chart.subscribeCrosshairMove((param) => {
-    if (dragState || state.drawingDrag || state.tool || posToolDrag) return;
+    if (dragState || state.drawingDrag || state.tool || store.posToolDrag) return;
     if (!param.point) {
       chartEl.style.cursor = '';
       return;
@@ -3056,7 +3071,7 @@ function initDragSLTP() {
   chartEl.addEventListener(
     'mousedown',
     (e) => {
-      if (state.tool || dragState || state.drawingDrag || posToolDrag) return;
+      if (state.tool || dragState || state.drawingDrag || store.posToolDrag) return;
       const rect = chartEl.getBoundingClientRect();
       const y = e.clientY - rect.top;
       const x = e.clientX - rect.left;
@@ -3067,7 +3082,7 @@ function initDragSLTP() {
         if (hit) {
           e.preventDefault();
           e.stopPropagation();
-          posToolDrag = hit;
+          store.posToolDrag = hit;
           document.body.style.cursor = 'ns-resize';
           document.addEventListener('mousemove', onPosToolDragMove);
           document.addEventListener('mouseup', onPosToolDragEnd);
@@ -3168,7 +3183,13 @@ function initDragSLTP() {
   chartEl.addEventListener(
     'touchstart',
     (e) => {
-      if (state.tool || dragState || state.drawingDrag || posToolDrag || e.touches.length !== 1)
+      if (
+        state.tool ||
+        dragState ||
+        state.drawingDrag ||
+        store.posToolDrag ||
+        e.touches.length !== 1
+      )
         return;
       const rect = chartEl.getBoundingClientRect();
       const y = e.touches[0].clientY - rect.top;
@@ -3180,7 +3201,7 @@ function initDragSLTP() {
         if (ptHit) {
           e.preventDefault();
           e.stopPropagation();
-          posToolDrag = ptHit;
+          store.posToolDrag = ptHit;
           const ptMove = (ev) => {
             if (ev.touches.length !== 1) return;
             ev.preventDefault();
@@ -3460,7 +3481,7 @@ function syncTopbarUI() {
   sel.style.display = blind ? 'none' : '';
   sel.disabled = blind;
   $('blind-chip').style.display = blind ? '' : 'none';
-  if (!blind && SYMBOLS[state.symbol]) sel.value = state.symbol;
+  if (!blind && store.SYMBOLS[state.symbol]) sel.value = state.symbol;
   $$('#tf-seg button').forEach((b) => {
     b.classList.toggle('active', b.dataset.tf === state.timeframe);
     b.disabled = blind || !symInfo(state.symbol).tfs.includes(b.dataset.tf);
@@ -3477,10 +3498,10 @@ async function loadAndStart() {
   if (typeof clearReviewLines === 'function') clearReviewLines(); // 換場景時移除檢討線
   if (dragState) cancelLineDrag(); // 進行中的線拖曳不可跨到新標的
   if (state.drawingDrag) onDrawingDragEnd();
-  if (_closeTargetId) {
+  if (store._closeTargetId) {
     // 開著的平倉視窗屬於舊標的，一併收掉
     $('close-modal').classList.remove('show');
-    _closeTargetId = null;
+    store._closeTargetId = null;
   }
   // Reset in-progress drawing when switching context
   resetPendingPoints();
@@ -3669,9 +3690,9 @@ function checkPositionTriggers(newBar) {
       changed = true;
       didClose = true;
       // 若平倉視窗正對著這個部位，關掉它（否則會留下一個按了沒反應的死視窗）
-      if (_closeTargetId === p.id) {
+      if (store._closeTargetId === p.id) {
         $('close-modal').classList.remove('show');
-        _closeTargetId = null;
+        store._closeTargetId = null;
       }
     }
   }
@@ -4002,11 +4023,11 @@ function closeAllPositions() {
   if (dropIds.size) state.positions = state.positions.filter((x) => !dropIds.has(x.id));
   // 平倉視窗若正對著剛被清掉的部位，一併收掉，否則會留下一個按了沒反應的死視窗
   if (
-    _closeTargetId &&
-    (dropIds.has(_closeTargetId) || opens.some((p) => p.id === _closeTargetId))
+    store._closeTargetId &&
+    (dropIds.has(store._closeTargetId) || opens.some((p) => p.id === store._closeTargetId))
   ) {
     $('close-modal').classList.remove('show');
-    _closeTargetId = null;
+    store._closeTargetId = null;
   }
   saveStorage();
   // 整批跑完才重繪一次：逐筆重繪在十幾筆部位時會明顯卡頓
@@ -4059,22 +4080,20 @@ function addPosStop(posId, type) {
   );
 }
 
-let _closeTargetId = null;
-let _closeFrac = 1; // 平倉比例（分批出場）
 function updateCloseInfo() {
-  const p = state.positions.find((x) => x.id === _closeTargetId);
+  const p = state.positions.find((x) => x.id === store._closeTargetId);
   const c = state.candles[state.cursorIndex];
   if (!p || !c) return;
   const dir = p.side === 'long' ? 1 : -1;
   const pnlPts = (c.close - p.entryPrice) * dir;
-  const part = p.size * _closeFrac;
+  const part = p.size * store._closeFrac;
   const pnl = pnlPts * posPV(p) * part;
   const info = symInfo(p.symbol);
   $('close-info').innerHTML = `
     <strong>${dispSym(p)}</strong> ${p.side === 'long' ? '多單' : '空單'} ·
     進場 ${fmtPrice(p.entryPrice)} → 平倉 <strong>${fmtPrice(c.close)}</strong><br>
-    平掉 <strong>${part.toFixed(info.sizeDecimals)} ${info.sizeUnit}</strong>（${Math.round(_closeFrac * 100)}%）
-    ${_closeFrac < 1 ? `，續抱 ${(p.size - part).toFixed(info.sizeDecimals)} ${info.sizeUnit}` : ''}<br>
+    平掉 <strong>${part.toFixed(info.sizeDecimals)} ${info.sizeUnit}</strong>（${Math.round(store._closeFrac * 100)}%）
+    ${store._closeFrac < 1 ? `，續抱 ${(p.size - part).toFixed(info.sizeDecimals)} ${info.sizeUnit}` : ''}<br>
     預估盈虧: <strong style="color:${pnl >= 0 ? 'var(--accent-2)' : 'var(--danger-2)'}">${fmtMoney(pnl)}</strong>
   `;
 }
@@ -4086,10 +4105,10 @@ function openCloseModal(posId) {
     showToast(`請先切換到 ${symLabel(p.symbol)} ${p.timeframe} 再平倉`, 'error');
     return;
   }
-  _closeTargetId = posId;
+  store._closeTargetId = posId;
   const c = state.candles[state.cursorIndex];
   if (!c) return;
-  _closeFrac = 1;
+  store._closeFrac = 1;
   $$('#close-frac-row button').forEach((b) => b.classList.toggle('active', b.dataset.frac === '1'));
   updateCloseInfo();
   const dir = p.side === 'long' ? 1 : -1;
@@ -4129,12 +4148,12 @@ function closePartialPosition(p, frac, exitPrice, exitReason, exitTime, exitNote
   saveStorage();
 }
 function confirmManualClose() {
-  const p = state.positions.find((x) => x.id === _closeTargetId);
+  const p = state.positions.find((x) => x.id === store._closeTargetId);
   const c = state.candles[state.cursorIndex];
   // 部位可能在視窗開著時已被停損/停利平掉——關窗並說明，不要靜默無反應
   if (!p || p.status !== 'open') {
     $('close-modal').classList.remove('show');
-    _closeTargetId = null;
+    store._closeTargetId = null;
     showToast('這個部位已經不在了（可能已觸價出場）', 'error');
     return;
   }
@@ -4142,24 +4161,27 @@ function confirmManualClose() {
   // 用它平倉會寫出價格與時間都錯亂的假交易，直接擋下
   if (p.symbol !== state.symbol || p.timeframe !== state.timeframe) {
     $('close-modal').classList.remove('show');
-    _closeTargetId = null;
+    store._closeTargetId = null;
     showToast(`已切換標的，請切回 ${symLabel(p.symbol)} ${p.timeframe} 再平倉`, 'error');
     return;
   }
   if (!c) return;
   const reason = $('close-reason').value;
   const note = $('close-note').value.trim();
-  if (_closeFrac < 0.999) closePartialPosition(p, _closeFrac, c.close, reason, c.time, note);
+  if (store._closeFrac < 0.999)
+    closePartialPosition(p, store._closeFrac, c.close, reason, c.time, note);
   else closePosition(p, c.close, reason, c.time, note);
   $('close-modal').classList.remove('show');
-  _closeTargetId = null;
+  store._closeTargetId = null;
   renderPositions();
   renderTrades();
   renderReport();
   updateHotStats();
   redrawPositionLines();
   showToast(
-    _closeFrac < 0.999 ? `✓ 已部分平倉 ${Math.round(_closeFrac * 100)}%，剩餘續抱` : '✓ 已平倉',
+    store._closeFrac < 0.999
+      ? `✓ 已部分平倉 ${Math.round(store._closeFrac * 100)}%，剩餘續抱`
+      : '✓ 已平倉',
     'success',
   );
   if (!checkBlowUp()) checkLossStreak(); // 爆倉優先：已經出局就不必再提醒連敗
@@ -4227,10 +4249,6 @@ function checkLossStreak() {
 // ---------- 餘額歸零強制出局（爆倉） ----------
 // 已宣告出局的 scope，依 fuseScopeKey() 分開記（比照 _fuseNotified，盲測輪與自由模式互不汙染）
 let _blownUp = {};
-// 「這輪曾經有錢」：權益是全域的（起始資金 + 全部已實現），一輪把錢燒光之後，
-// 下一輪開場的權益還是負的。少了這個閂，每開一輪新盲測都會在第一根 K 棒被判出局。
-// 所以只在「看過 > 0 才跌到 <= 0」時宣告；權益重新回正才重新上膛。
-let _blowUpArmed = false;
 function checkBlowUp() {
   const key = fuseScopeKey();
   if (_blownUp[key]) return false;
@@ -4239,12 +4257,12 @@ function checkBlowUp() {
   // 否則會用一個「畫面顯示 —」的數字把使用者判出局，怎麼解釋都解釋不通
   if (!Number.isFinite(eq.total)) return false;
   if (eq.total > 0) {
-    _blowUpArmed = true;
+    store._blowUpArmed = true;
     return false;
   }
-  if (!_blowUpArmed) return false; // 開場就是負的 → 是上一輪的殘值，不重複宣告
+  if (!store._blowUpArmed) return false; // 開場就是負的 → 是上一輪的殘值，不重複宣告
   _blownUp[key] = true;
-  _blowUpArmed = false;
+  store._blowUpArmed = false;
   stopPlay();
   const b = state.blind;
   const c = state.candles[state.cursorIndex];
@@ -4274,10 +4292,10 @@ function checkBlowUp() {
       for (const p of opens) closePosition(p, c.close, '爆倉強制平倉', c.time, '餘額歸零強制出局');
     if (dropIds.size) state.positions = state.positions.filter((x) => !dropIds.has(x.id));
   }
-  if (_closeTargetId) {
+  if (store._closeTargetId) {
     // 部位已被清掉，開著的平倉視窗會變成死視窗
     $('close-modal').classList.remove('show');
-    _closeTargetId = null;
+    store._closeTargetId = null;
   }
   if (b) {
     finishBlindSession('爆倉出局', { blownUp: true }); // 內含清場、揭曉、寫入 blindHistory
@@ -4404,7 +4422,7 @@ async function replayTrade(tradeId) {
       return;
     }
   } else if (t.symbol !== state.symbol || t.timeframe !== state.timeframe) {
-    if (!SYMBOLS[t.symbol]) {
+    if (!store.SYMBOLS[t.symbol]) {
       showToast('這筆交易的標的已不在清單中', 'error');
       return;
     }
@@ -4661,7 +4679,7 @@ function updateHotStats() {
   const { realized, unreal, total } = currentEquity();
   // 畫面上顯示過有錢，爆倉判定才上膛（見 _blowUpArmed）——包含重整後第一次繪製，
   // 否則帶著浮虧部位重整進來、下一根就歸零的情境會漏判
-  if (Number.isFinite(total) && total > 0) _blowUpArmed = true;
+  if (Number.isFinite(total) && total > 0) store._blowUpArmed = true;
   $('hs-balance').textContent = fmtMoney(total);
   $('hs-realized').textContent = fmtMoney(realized);
   $('hs-realized').style.color = realized >= 0 ? 'var(--accent-2)' : 'var(--danger-2)';
@@ -4865,7 +4883,6 @@ async function sendMagicLink() {
 // 非會員攔截：不是丟一行紅字就算了，導去 Skool 付費頁
 const PLANS_URL = 'https://www.skool.com/blue-print/about';
 const CHOOSER_KEY = 'tradersim.forceChooser';
-let _signOutPromise = null;
 
 // 「下次 Google 登入強制跳帳號選擇器」的旗標。放 sessionStorage 而不是記憶體：
 // 攔截卡本身就會把人整頁送去 Skool，記憶體變數活不過那一趟，
@@ -4900,9 +4917,9 @@ async function goPlans() {
   $('nomember-count').textContent = '前往中…';
   // 登出是非同步的（先打 /logout 再清 localStorage）。導頁若搶在它前面，
   // token 會殘留，使用者回來又被自動攔截一次。等它，但最多等 600ms。
-  if (_signOutPromise) {
+  if (store._signOutPromise) {
     try {
-      await Promise.race([_signOutPromise, new Promise((r) => setTimeout(r, 600))]);
+      await Promise.race([store._signOutPromise, new Promise((r) => setTimeout(r, 600))]);
     } catch {}
   }
   location.href = PLANS_URL;
@@ -4943,7 +4960,7 @@ async function handleAuthSuccess(sbUser) {
   if (!sbUser.email) {
     _handledUid = null;
     showNotMember('');
-    _signOutPromise = window.sb.auth.signOut().catch(() => {});
+    store._signOutPromise = window.sb.auth.signOut().catch(() => {});
     return;
   }
   // 會員資格檢查（= 白名單同步方舟訂閱會員）
@@ -4958,7 +4975,7 @@ async function handleAuthSuccess(sbUser) {
     _handledUid = null;
     showNotMember(sbUser.email);
     // 不 await：登出走網路，不能讓攔截畫面卡在轉圈。goPlans() 會在導頁前補等一下。
-    _signOutPromise = window.sb.auth.signOut().catch(() => {});
+    store._signOutPromise = window.sb.auth.signOut().catch(() => {});
     return;
   }
   // 走到這裡＝有效會員。若這一輪曾顯示過攔截卡（例如跨分頁先被錯帳號擋過），
@@ -4981,7 +4998,7 @@ async function handleAuthSuccess(sbUser) {
   if (!_appBooted) {
     await bootApp();
     _appBooted = true;
-  } else if (state.blind && SYMBOLS[state.blind.symbol]) {
+  } else if (state.blind && store.SYMBOLS[state.blind.symbol]) {
     // 雲端還原了進行中的盲測
     await enterBlindReplay();
   } else {
@@ -5073,7 +5090,9 @@ const BLIND_CONTEXT_BARS = 60; // 起始點前至少保留的歷史根數
 const BLIND_BASE_PRICE = 100; // 正規化後的起始價
 
 function blindPool(cats, tf) {
-  return Object.values(SYMBOLS).filter((s) => cats.includes(s.category) && s.tfs.includes(tf));
+  return Object.values(store.SYMBOLS).filter(
+    (s) => cats.includes(s.category) && s.tfs.includes(tf),
+  );
 }
 
 function getBlindSetupOpts() {
@@ -5091,7 +5110,7 @@ function updateBlindPoolHint() {
     .filter((c) => cats.includes(c))
     .map((c) => ({ c, n: pool.filter((s) => s.category === c).length }))
     .filter((x) => x.n > 0)
-    .map((x) => `${CATEGORY_LABELS[x.c] || x.c} ${x.n}`)
+    .map((x) => `${store.CATEGORY_LABELS[x.c] || x.c} ${x.n}`)
     .join('・');
   $('blind-pool-hint').textContent = pool.length
     ? `隨機池 ${pool.length} 檔（${parts}）— 只會從打勾的類別抽 1 檔`
@@ -5333,7 +5352,7 @@ function rCurveSvg(curve, w = 430, h = 120) {
 
 function showBlindResult(s, wasAbandoned) {
   const info = symInfo(s.symbol);
-  const catLabel = CATEGORY_LABELS[info.category] || '';
+  const catLabel = store.CATEGORY_LABELS[info.category] || '';
   const period =
     s.startTime && s.endTime
       ? `${fmtDateTime(s.startTime, '1d')} ~ ${fmtDateTime(s.endTime, '1d')}`
@@ -5496,7 +5515,7 @@ function wireEvents() {
   // 平倉比例（分批出場）
   $$('#close-frac-row button').forEach((b) =>
     b.addEventListener('click', () => {
-      _closeFrac = +b.dataset.frac;
+      store._closeFrac = +b.dataset.frac;
       $$('#close-frac-row button').forEach((x) => x.classList.toggle('active', x === b));
       updateCloseInfo();
     }),
@@ -5520,7 +5539,7 @@ function wireEvents() {
   document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
     // 拖曳進行中不接受回放快捷鍵：腳下的 K 棒在動會讓拖曳的參考價一直變
-    if (dragState || state.drawingDrag || posToolDrag) return;
+    if (dragState || state.drawingDrag || store.posToolDrag) return;
     if (e.key === ' ') {
       e.preventDefault();
       togglePlay();
@@ -5548,7 +5567,7 @@ function wireLogin() {
   $('btn-switch-account').addEventListener('click', () => {
     setForceChooser(true); // 下一次 Google 登入強制跳帳號選擇器
     backToLogin();
-    _signOutPromise = window.sb?.auth.signOut().catch(() => {});
+    store._signOutPromise = window.sb?.auth.signOut().catch(() => {});
   });
   // 從 Skool 按上一頁若走 bfcache，狀態列會殘留「前往中…」看起來當掉
   window.addEventListener('pageshow', (e) => {
@@ -5567,13 +5586,13 @@ async function loadSymbolManifest() {
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const j = await res.json();
     if (Array.isArray(j.symbols) && j.symbols.length) {
-      SYMBOLS = {};
-      for (const s of j.symbols) SYMBOLS[s.key] = s;
-      if (j.categories) CATEGORY_LABELS = j.categories;
+      store.SYMBOLS = {};
+      for (const s of j.symbols) store.SYMBOLS[s.key] = s;
+      if (j.categories) store.CATEGORY_LABELS = j.categories;
     }
   } catch (e) {
     console.warn('symbols.json 載入失敗，使用內建標的', e);
-    SYMBOLS = { ...BUILTIN_SYMBOLS };
+    store.SYMBOLS = { ...BUILTIN_SYMBOLS };
   }
 }
 
@@ -5582,22 +5601,22 @@ function populateSymbolSelect() {
   const cats = ['futures', 'crypto', 'us', 'tw'];
   sel.innerHTML = cats
     .map((cat) => {
-      const items = Object.values(SYMBOLS).filter((s) => s.category === cat);
+      const items = Object.values(store.SYMBOLS).filter((s) => s.category === cat);
       if (!items.length) return '';
       return (
-        `<optgroup label="${escHtml(CATEGORY_LABELS[cat] || cat)}">` +
+        `<optgroup label="${escHtml(store.CATEGORY_LABELS[cat] || cat)}">` +
         items.map((s) => `<option value="${escHtml(s.key)}">${escHtml(s.name)}</option>`).join('') +
         '</optgroup>'
       );
     })
     .join('');
-  if (SYMBOLS[state.symbol]) sel.value = state.symbol;
+  if (store.SYMBOLS[state.symbol]) sel.value = state.symbol;
 }
 
 async function bootApp() {
   loadStorage();
   await loadSymbolManifest();
-  if (!SYMBOLS[state.symbol]) state.symbol = Object.keys(SYMBOLS)[0];
+  if (!store.SYMBOLS[state.symbol]) state.symbol = Object.keys(store.SYMBOLS)[0];
   $('set-balance').value = state.settings.balance;
   initPaneResizer(); // 要在 initChart 前：圖表建立當下就吃到還原後的側欄寬度，省一次 resize
   initChart();
@@ -5612,7 +5631,7 @@ async function bootApp() {
   // Sync subpane time scale with main chart pan/zoom
   chart.timeScale().subscribeVisibleLogicalRangeChange(syncSubpaneRanges);
   setOrderSide('long');
-  if (state.blind && SYMBOLS[state.blind.symbol]) {
+  if (state.blind && store.SYMBOLS[state.blind.symbol]) {
     await enterBlindReplay(); // 還原上次未完成的盲測
     showToast('已還原進行中的盲測', 'success');
   } else {
