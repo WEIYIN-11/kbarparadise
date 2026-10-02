@@ -1,0 +1,6051 @@
+// ============================================================
+// 練功房 - 主程式
+// ============================================================
+
+// ---------- Constants ----------
+// 標的註冊表：正式清單由 data/symbols.json 載入（fetch-data.mjs 產出），
+// 這裡只放載入失敗時的內建保底三檔。pointValue = 每 1 點對應 USD。
+const TWD_USD = 31;
+const BUILTIN_SYMBOLS = {
+  NQ: {
+    key: 'NQ',
+    name: 'NQ 那斯達克100期貨',
+    category: 'futures',
+    pointValue: 20,
+    sizeUnit: '口',
+    sizeDecimals: 2,
+    tfs: ['1d', '1h'],
+  },
+  BTC: {
+    key: 'BTC',
+    name: 'BTC 比特幣',
+    category: 'crypto',
+    pointValue: 1,
+    sizeUnit: '顆',
+    sizeDecimals: 4,
+    tfs: ['1d', '1h'],
+  },
+  TXF: {
+    key: 'TXF',
+    name: 'TXF 台指期',
+    category: 'futures',
+    pointValue: 200 / TWD_USD,
+    sizeUnit: '口',
+    sizeDecimals: 2,
+    tfs: ['1d', '1h'],
+  },
+};
+let SYMBOLS = { ...BUILTIN_SYMBOLS };
+let CATEGORY_LABELS = { futures: '期指', crypto: '加密貨幣', us: '美股', tw: '台股' };
+
+function symInfo(sym) {
+  return (
+    SYMBOLS[sym] || {
+      key: sym,
+      name: sym,
+      category: '',
+      pointValue: 1,
+      sizeUnit: '',
+      sizeDecimals: 2,
+      tfs: ['1d'],
+    }
+  );
+}
+// 下單當下的有效點值：盲測時價格被正規化（×scale），點值同步 ÷scale，金額不變
+function getPointValue(sym) {
+  const pv = symInfo(sym).pointValue;
+  return state.blind && sym === state.blind.symbol ? pv / state.blind.scale : pv;
+}
+// 部位/交易計算盈虧用的點值：優先用建倉時快照（盲測倉位必須用快照才正確）
+function posPV(p) {
+  return p.pv ?? symInfo(p.symbol).pointValue;
+}
+function sizeStr(p) {
+  const info = symInfo(p.symbol);
+  return p.size.toFixed(info.sizeDecimals) + (info.sizeUnit ? ' ' + info.sizeUnit : '');
+}
+// 盲測遮罩：進行中的盲測交易不顯示真實標的名稱
+function isMasked(p) {
+  return !!(state.blind && p.blindId === state.blind.id);
+}
+function dispSym(p) {
+  return isMasked(p) ? '❓❓' : p.symbol;
+}
+function symLabel(sym) {
+  if (state.blind && sym === state.blind.symbol) return '❓ 盲測標的';
+  return symInfo(sym).name;
+}
+// 盲測 scope：盲測中只操作盲測部位；平時只操作一般部位（避免互相觸發）
+function inScope(p) {
+  return (p.blindId || null) === (state.blind ? state.blind.id : null);
+}
+
+const STORAGE_KEYS = {
+  trades: 'tradersim_trades_v1',
+  settings: 'tradersim_settings_v1',
+  drawings: 'tradersim_drawings_v1',
+  indicators: 'tradersim_indicators_v1',
+  drawTemplates: 'tradersim_draw_templates_v1',
+  blind: 'tradersim_blind_v1',
+};
+
+// Default templates per tool (TradingView-like presets)
+const DEFAULT_DRAW_TEMPLATES = {
+  trend: [
+    {
+      id: 'tpl-trend-default',
+      name: '預設',
+      style: { color: '#3b82f6', lineWidth: 2, lineStyle: 0, label: '' },
+    },
+    {
+      id: 'tpl-trend-support',
+      name: '支撐線',
+      style: { color: '#089981', lineWidth: 3, lineStyle: 0, label: '支撐' },
+    },
+    {
+      id: 'tpl-trend-resist',
+      name: '壓力線',
+      style: { color: '#f23645', lineWidth: 3, lineStyle: 0, label: '壓力' },
+    },
+    {
+      id: 'tpl-trend-channel',
+      name: '通道',
+      style: { color: '#a855f7', lineWidth: 1.5, lineStyle: 2, label: '' },
+    },
+  ],
+  hline: [
+    {
+      id: 'tpl-hline-default',
+      name: '預設',
+      style: { color: '#3b82f6', lineWidth: 1, lineStyle: 2, label: '' },
+    },
+    {
+      id: 'tpl-hline-target',
+      name: '目標價',
+      style: { color: '#fbbf24', lineWidth: 2, lineStyle: 0, label: '目標' },
+    },
+    {
+      id: 'tpl-hline-key',
+      name: '關鍵位',
+      style: { color: '#a855f7', lineWidth: 2, lineStyle: 0, label: '關鍵' },
+    },
+    {
+      id: 'tpl-hline-faint',
+      name: '參考線',
+      style: { color: '#94a3b8', lineWidth: 1, lineStyle: 3, label: '' },
+    },
+  ],
+  rect: [
+    {
+      id: 'tpl-rect-default',
+      name: '預設',
+      style: { color: '#3b82f6', lineWidth: 1.5, lineStyle: 0, label: '' },
+    },
+    {
+      id: 'tpl-rect-demand',
+      name: '需求區',
+      style: { color: '#089981', lineWidth: 2, lineStyle: 0, label: '需求' },
+    },
+    {
+      id: 'tpl-rect-supply',
+      name: '供給區',
+      style: { color: '#f23645', lineWidth: 2, lineStyle: 0, label: '供給' },
+    },
+    {
+      id: 'tpl-rect-zone',
+      name: '盤整區',
+      style: { color: '#fbbf24', lineWidth: 1.5, lineStyle: 2, label: '盤整' },
+    },
+  ],
+  fib: [
+    {
+      id: 'tpl-fib-default',
+      name: '預設',
+      style: { color: '#3b82f6', lineWidth: 1, lineStyle: 0, label: '' },
+    },
+    {
+      id: 'tpl-fib-retrace',
+      name: '回撤',
+      style: { color: '#a855f7', lineWidth: 1, lineStyle: 0, label: '' },
+    },
+  ],
+  ray: [
+    {
+      id: 'tpl-ray-default',
+      name: '預設',
+      style: { color: '#3b82f6', lineWidth: 2, lineStyle: 0, label: '' },
+    },
+  ],
+  extline: [
+    {
+      id: 'tpl-extline-default',
+      name: '預設',
+      style: { color: '#3b82f6', lineWidth: 1.5, lineStyle: 2, label: '' },
+    },
+  ],
+  vline: [
+    {
+      id: 'tpl-vline-default',
+      name: '預設',
+      style: { color: '#787b86', lineWidth: 1, lineStyle: 2, label: '' },
+    },
+  ],
+  channel: [
+    {
+      id: 'tpl-channel-default',
+      name: '預設',
+      style: { color: '#2962ff', lineWidth: 1.5, lineStyle: 0, label: '' },
+    },
+  ],
+  ellipse: [
+    {
+      id: 'tpl-ellipse-default',
+      name: '預設',
+      style: { color: '#f5c878', lineWidth: 1.5, lineStyle: 0, label: '' },
+    },
+  ],
+  arrow: [
+    {
+      id: 'tpl-arrow-default',
+      name: '預設',
+      style: { color: '#f23645', lineWidth: 2, lineStyle: 0, label: '' },
+    },
+  ],
+  text: [
+    {
+      id: 'tpl-text-default',
+      name: '預設',
+      style: { color: '#d1d4dc', lineWidth: 2, lineStyle: 0, label: '' },
+    },
+  ],
+  pricelabel: [
+    {
+      id: 'tpl-pricelabel-default',
+      name: '預設',
+      style: { color: '#2962ff', lineWidth: 1, lineStyle: 0, label: '' },
+    },
+  ],
+  measure: [
+    {
+      id: 'tpl-measure-default',
+      name: '預設',
+      style: { color: '#2962ff', lineWidth: 1, lineStyle: 0, label: '' },
+    },
+  ],
+};
+
+// 各工具需要的取點數
+const TOOL_POINTS = {
+  trend: 2,
+  ray: 2,
+  extline: 2,
+  hline: 1,
+  vline: 1,
+  channel: 3,
+  rect: 2,
+  ellipse: 2,
+  fib: 2,
+  arrow: 2,
+  text: 1,
+  pricelabel: 1,
+  measure: 2,
+};
+
+// ---------- State ----------
+const state = {
+  symbol: 'NQ',
+  timeframe: '1h',
+  candles: [], // currently loaded candles (full)
+  cursorIndex: -1, // index of "current" bar (last visible)
+  isPlaying: false,
+  playSpeed: 5, // 1..10
+  playTimer: null,
+  orderSide: 'long',
+  positions: [],
+  trades: [],
+  // sideWidth / sideHeight 分開存：同一個人在電腦拉寬側欄後用手機開，不該把手機版面一起改掉
+  settings: { balance: 100000, sideWidth: 340, sideHeight: 280 },
+  blind: null, // 進行中盲測 { id, symbol, timeframe, scale, startIndex, endIndex, cursorIndex, playBars, startedAt }
+  blindHistory: [], // 已完成盲測摘要（新到舊）
+  cache: {}, // { 'NQ_1h': candles, ... }
+  user: null, // { uid, email, name, photoURL } | null
+  guestMode: false,
+  // Drawing tools
+  tool: '', // '' | trend/ray/extline/hline/vline/channel/rect/ellipse/fib/arrow/text/pricelabel/measure
+  drawColor: '#3b82f6',
+  firstPoint: null, // 保留舊欄位（回溯相容）
+  pendingPoints: [], // 多點工具的已取點
+  hoverPoint: null, // current cursor for preview
+  magnet: false, // 磁鐵吸附 OHLC
+  drawingsHidden: false, // 隱藏所有畫線
+  drawings: {}, // { 'NQ_1h': [{id,type,points,color}, ...] }
+  timeAxisVisible: true,
+  selectedDrawingId: null,
+  drawingDrag: null, // { drawingId, mode: 'move'|'anchor', anchorIdx, startTime, startPrice, snapshot }
+  // Drawing templates: per-tool list of presets + currently active id
+  drawTemplates: null, // { trend: [...], hline: [...], rect: [...], fib: [...] }
+  activeTplId: {
+    trend: 'tpl-trend-default',
+    hline: 'tpl-hline-default',
+    rect: 'tpl-rect-default',
+    fib: 'tpl-fib-default',
+    ray: 'tpl-ray-default',
+    extline: 'tpl-extline-default',
+    vline: 'tpl-vline-default',
+    channel: 'tpl-channel-default',
+    ellipse: 'tpl-ellipse-default',
+    arrow: 'tpl-arrow-default',
+    text: 'tpl-text-default',
+    pricelabel: 'tpl-pricelabel-default',
+    measure: 'tpl-measure-default',
+  },
+  // Chart-order position tool（TV 式多空部位框）
+  posTool: null, // { side:'long'|'short', entry, sl, tp } | null
+  // Indicators
+  indicators: {
+    ema: [
+      { period: 9, color: '#fbbf24', enabled: false },
+      { period: 20, color: '#3b82f6', enabled: false },
+      { period: 50, color: '#a855f7', enabled: false },
+      { period: 200, color: '#f23645', enabled: false },
+    ],
+    sma: [
+      { period: 20, color: '#f5c878', enabled: false },
+      { period: 60, color: '#e040fb', enabled: false },
+    ],
+    bb: { period: 20, std: 2, enabled: false },
+    volume: { enabled: false },
+    vwap: { color: '#ff6d00', enabled: false },
+    ichimoku: { tenkan: 9, kijun: 26, senkou: 52, enabled: false },
+    sar: { step: 0.02, max: 0.2, enabled: false },
+    supertrend: { period: 10, mult: 3, enabled: false },
+    rsi: { period: 14, enabled: false },
+    macd: { fast: 12, slow: 26, signal: 9, enabled: false },
+    stoch: { k: 14, kSmooth: 3, d: 3, enabled: false },
+    atr: { period: 14, enabled: false },
+    cci: { period: 20, enabled: false },
+    obv: { enabled: false },
+    adx: { period: 14, enabled: false },
+  },
+};
+
+// ---------- Util ----------
+const $ = (id) => document.getElementById(id);
+const $$ = (sel) => document.querySelectorAll(sel);
+const fmtMoney = (n) => {
+  if (n == null || isNaN(n)) return '—';
+  const s = Math.abs(n) >= 1000 ? n.toFixed(0) : n.toFixed(2);
+  return (n < 0 ? '-$' : '$') + Math.abs(+s).toLocaleString();
+};
+// 價格小數位自適應：高價 2 位，低價幣（SHIB/PEPE 等）取夠多有效位數
+const priceDp = (p) => {
+  if (!isFinite(p) || p <= 0) return 2;
+  if (p >= 20) return 2;
+  if (p >= 1) return 3;
+  return Math.min(10, Math.ceil(-Math.log10(p)) + 3);
+};
+const fmtPrice = (n) => {
+  if (n == null || isNaN(n)) return '—';
+  return n.toFixed(priceDp(Math.abs(n)));
+};
+const fmtPct = (n) => (n == null || isNaN(n) ? '—' : (n >= 0 ? '+' : '') + n.toFixed(2) + '%');
+const fmtR = (n) => (n == null || isNaN(n) ? '—' : (n >= 0 ? '+' : '') + n.toFixed(2) + 'R');
+const escHtml = (s) =>
+  String(s ?? '').replace(
+    /[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c],
+  );
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const fmtDateTime = (ts, tf) => {
+  const d = new Date(ts * 1000);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  if (tf === '1d') return `${yyyy}-${mm}-${dd}`;
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+};
+function showToast(msg, kind) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = '';
+  void t.offsetWidth; // restart anim
+  t.classList.add('show');
+  if (kind) t.classList.add(kind);
+  clearTimeout(t._tid);
+  t._tid = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+// ---------- Storage ----------
+// 舊存檔缺少的新工具模板補上預設（新增工具類型時必要）
+function fillMissingTemplateTypes() {
+  if (!state.drawTemplates) return;
+  for (const k of Object.keys(DEFAULT_DRAW_TEMPLATES)) {
+    if (!Array.isArray(state.drawTemplates[k]) || !state.drawTemplates[k].length) {
+      state.drawTemplates[k] = JSON.parse(JSON.stringify(DEFAULT_DRAW_TEMPLATES[k]));
+    }
+    if (!state.activeTplId[k]) state.activeTplId[k] = state.drawTemplates[k][0].id;
+  }
+}
+
+// 指標設定合併：保留預設欄位，新指標鍵不會被舊存檔洗掉
+function mergeIndicators(src) {
+  if (!src) return;
+  for (const key of Object.keys(state.indicators)) {
+    const cur = state.indicators[key],
+      inc = src[key];
+    if (!inc) continue;
+    if (Array.isArray(cur)) {
+      if (Array.isArray(inc)) {
+        for (let i = 0; i < cur.length && i < inc.length; i++) Object.assign(cur[i], inc[i]);
+      }
+    } else {
+      Object.assign(cur, inc);
+    }
+  }
+}
+
+function loadStorage() {
+  try {
+    const t = localStorage.getItem(STORAGE_KEYS.trades);
+    if (t) {
+      const j = JSON.parse(t);
+      state.trades = (j.trades || []).filter((x) => x.status === 'closed');
+      state.positions = (j.positions || []).filter(
+        (x) => x.status === 'open' || x.status === 'pending',
+      );
+    }
+  } catch (e) {
+    console.warn('load trades fail', e);
+  }
+  try {
+    const s = localStorage.getItem(STORAGE_KEYS.settings);
+    if (s) Object.assign(state.settings, JSON.parse(s));
+  } catch (e) {
+    console.warn('load settings fail', e);
+  }
+  try {
+    const d = localStorage.getItem(STORAGE_KEYS.drawings);
+    if (d) state.drawings = JSON.parse(d) || {};
+  } catch (e) {
+    console.warn('load drawings fail', e);
+  }
+  try {
+    const i = localStorage.getItem(STORAGE_KEYS.indicators);
+    if (i) {
+      const parsed = JSON.parse(i);
+      mergeIndicators(parsed);
+    }
+  } catch (e) {
+    console.warn('load indicators fail', e);
+  }
+  // Drawing templates
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.drawTemplates);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      state.drawTemplates = parsed.templates || JSON.parse(JSON.stringify(DEFAULT_DRAW_TEMPLATES));
+      if (parsed.activeTplId) Object.assign(state.activeTplId, parsed.activeTplId);
+    } else {
+      state.drawTemplates = JSON.parse(JSON.stringify(DEFAULT_DRAW_TEMPLATES));
+    }
+  } catch (e) {
+    console.warn('load templates fail', e);
+    state.drawTemplates = JSON.parse(JSON.stringify(DEFAULT_DRAW_TEMPLATES));
+  }
+  fillMissingTemplateTypes();
+  // Blind mode
+  try {
+    const b = localStorage.getItem(STORAGE_KEYS.blind);
+    if (b) {
+      const j = JSON.parse(b);
+      state.blindHistory = Array.isArray(j.history) ? j.history : [];
+      state.blind = j.active || null;
+    }
+  } catch (e) {
+    console.warn('load blind fail', e);
+  }
+  // Normalize legacy drawings: ensure each has a `style` object
+  for (const key of Object.keys(state.drawings)) {
+    for (const d of state.drawings[key]) {
+      if (!d.style) {
+        d.style = {
+          color: d.color || '#3b82f6',
+          lineWidth: d.type === 'trend' ? 2 : d.type === 'rect' ? 1.5 : 1,
+          lineStyle: d.type === 'hline' ? 2 : 0,
+          label: '',
+        };
+      }
+    }
+  }
+}
+function saveStorage() {
+  try {
+    localStorage.setItem(
+      STORAGE_KEYS.trades,
+      JSON.stringify({
+        trades: state.trades,
+        positions: state.positions,
+      }),
+    );
+    localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(state.settings));
+    // 空陣列不落地：每造訪一個標的就會留下一個空 key，長期會累積無用空殼
+    const drawingsToSave = {};
+    for (const [k, v] of Object.entries(state.drawings)) {
+      if (Array.isArray(v) && v.length) drawingsToSave[k] = v;
+    }
+    localStorage.setItem(STORAGE_KEYS.drawings, JSON.stringify(drawingsToSave));
+    localStorage.setItem(STORAGE_KEYS.indicators, JSON.stringify(state.indicators));
+    if (state.drawTemplates) {
+      localStorage.setItem(
+        STORAGE_KEYS.drawTemplates,
+        JSON.stringify({
+          templates: state.drawTemplates,
+          activeTplId: state.activeTplId,
+        }),
+      );
+    }
+    localStorage.setItem(
+      STORAGE_KEYS.blind,
+      JSON.stringify({
+        active: state.blind,
+        history: state.blindHistory,
+      }),
+    );
+  } catch (e) {
+    console.warn('save fail', e);
+  }
+  // Mirror to Firestore (debounced) when signed in
+  queueFirestoreSave();
+}
+
+// Active template style for a tool/type
+function getActiveTplStyle(toolType) {
+  if (!state.drawTemplates || !state.drawTemplates[toolType]) {
+    return { color: '#3b82f6', lineWidth: 1.5, lineStyle: 0, label: '' };
+  }
+  const tplId = state.activeTplId[toolType];
+  const found =
+    state.drawTemplates[toolType].find((t) => t.id === tplId) || state.drawTemplates[toolType][0];
+  return found ? { ...found.style } : { color: '#3b82f6', lineWidth: 1.5, lineStyle: 0, label: '' };
+}
+// Convert lineStyle int → setLineDash array
+function lineDashFor(ls) {
+  switch (ls) {
+    case 1:
+      return [2, 3]; // dotted
+    case 2:
+      return [6, 4]; // dashed
+    case 3:
+      return [10, 6]; // long dashed
+    case 4:
+      return [2, 6]; // sparse dotted
+    default:
+      return []; // solid
+  }
+}
+// 盲測時用獨立 key：舊畫線不會洩露標的、正規化座標也不污染原標的
+function drawingsKey() {
+  return state.blind ? `blind_${state.blind.id}` : `${state.symbol}_${state.timeframe}`;
+}
+function getCurrentDrawings() {
+  const key = drawingsKey();
+  if (!state.drawings[key]) state.drawings[key] = [];
+  return state.drawings[key];
+}
+
+// ---------- Data loading ----------
+async function loadCandles(symbol, timeframe) {
+  const key = `${symbol}_${timeframe}`;
+  if (state.cache[key]) return state.cache[key];
+  const file = `data/${symbol}_${timeframe}.json`;
+  $('chart-loading').classList.remove('hidden');
+  try {
+    const res = await fetch(file);
+    if (!res.ok) throw new Error(`HTTP ${res.status} for ${file}`);
+    const j = await res.json();
+    state.cache[key] = j.candles || [];
+    return state.cache[key];
+  } catch (e) {
+    console.error(e);
+    showToast('資料載入失敗：' + e.message, 'error');
+    return [];
+  } finally {
+    $('chart-loading').classList.add('hidden');
+  }
+}
+
+// ---------- Chart ----------
+let chart,
+  candleSeries,
+  posLines = [];
+// Track price lines for drag: posId -> { entry, sl, tp } (each is an IPriceLine)
+const posLineMap = new Map();
+
+// Compute hypothetical P/L if position is closed at the given price
+function pnlAtPrice(p, price) {
+  const dir = p.side === 'long' ? 1 : -1;
+  return (price - p.entryPrice) * dir * posPV(p) * p.size;
+}
+// Money string with explicit sign (+$1,234 / -$567)
+function fmtMoneySigned(n) {
+  if (n == null || isNaN(n)) return '—';
+  const abs = Math.abs(n);
+  const s = abs >= 1000 ? abs.toFixed(0) : abs.toFixed(2);
+  return (n < 0 ? '-$' : '+$') + Number(s).toLocaleString();
+}
+function slLineTitle(p, price, dragging) {
+  return `🔻 SL ${fmtPrice(price)}  ${fmtMoneySigned(pnlAtPrice(p, price))}${dragging ? ' …' : ''}`;
+}
+function tpLineTitle(p, price, dragging) {
+  return `🎯 TP ${fmtPrice(price)}  ${fmtMoneySigned(pnlAtPrice(p, price))}${dragging ? ' …' : ''}`;
+}
+function initChart() {
+  const el = $('chart');
+  chart = LightweightCharts.createChart(el, {
+    layout: { background: { color: '#131722' }, textColor: '#9598a1' },
+    grid: {
+      vertLines: { color: 'rgba(42,46,57,0.55)' },
+      horzLines: { color: 'rgba(42,46,57,0.55)' },
+    },
+    rightPriceScale: { borderColor: '#2a2e39' },
+    timeScale: {
+      borderColor: '#2a2e39',
+      timeVisible: true,
+      secondsVisible: false,
+    },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+  });
+  applyChartType(); // 依 settings.chartType 建立主圖 series（K棒/美國線/折線/面積）
+  // TV 式 legend：無十字線時顯示最後一根，有十字線時顯示所指 K 棒
+  chart.subscribeCrosshairMove((param) => {
+    if (!param.time || !param.seriesData.size) {
+      updateLegend(null, null);
+      return;
+    }
+    const c = param.seriesData.get(candleSeries);
+    if (!c) return;
+    updateLegend(c, param.time);
+  });
+  // 這裡不能只 applyOptions({})：lightweight-charts v4 沒開 autoSize 時 applyOptions 不碰尺寸，
+  // 圖表會一直停在建立當下的寬高，價格↔座標換算跟著失準（畫線就會整條偏掉）
+  window.addEventListener('resize', syncPaneChartSizes);
+  // iOS Safari 轉向時 resize 事件時機不可靠（常常在版面還沒定案時就發），
+  // 補一次延遲同步，否則轉向後畫布會停在舊尺寸溢出到側欄上
+  window.addEventListener('orientationchange', () => setTimeout(syncPaneChartSizes, 250));
+}
+
+// ============================================================
+// 版面分隔線（圖表區 ⇄ 側欄，可拖曳）
+// ============================================================
+const PANE_DEFAULT = { width: 340, height: 280 };
+// minChart：圖表區的絕對下限，視窗窄到放不下時它優先於 side 的 min/max
+const PANE_LIMIT = { minW: 260, maxW: 620, minChart: 320, minH: 160, maxHRatio: 0.7 };
+let _paneRaf = 0;
+let _syncingPanes = false;
+
+// 900px 是 .main 由 row 轉 column 的斷點；用 matchMedia 讀同一個門檻，避免兩邊各寫一份數字
+function isPaneColumn() {
+  return window.matchMedia('(max-width: 900px)').matches;
+}
+
+function clampSideWidth(px) {
+  const main = $('main-pane');
+  const resizer = $('pane-resizer');
+  const total = (main && main.clientWidth) || window.innerWidth;
+  const gap = (resizer && resizer.offsetWidth) || 12;
+  // 視窗放不下時 minChart 蓋過 maxW，再蓋過 minW：先夾上限、後夾下限
+  const cap = Math.min(PANE_LIMIT.maxW, total - PANE_LIMIT.minChart - gap);
+  return Math.round(Math.max(PANE_LIMIT.minW, Math.min(cap, px)));
+}
+
+function clampSideHeight(px) {
+  const main = $('main-pane');
+  const total = (main && main.clientHeight) || window.innerHeight;
+  const cap = Math.max(PANE_LIMIT.minH, Math.round(total * PANE_LIMIT.maxHRatio));
+  return Math.round(Math.max(PANE_LIMIT.minH, Math.min(cap, px)));
+}
+
+// 只改 CSS 變數、不寫 .side 的 inline width/height，斷點切換時才不會有殘留的鎖死
+function applyPaneVars() {
+  const main = $('main-pane');
+  if (!main) return;
+  const s = state.settings;
+  main.style.setProperty('--side-w', (s.sideWidth || PANE_DEFAULT.width) + 'px');
+  main.style.setProperty('--side-h', (s.sideHeight || PANE_DEFAULT.height) + 'px');
+}
+
+// 版面尺寸一動就得把圖表拉回容器大小，否則 priceToCoordinate 還在用舊寬高，畫線座標會跑掉
+function syncPaneChartSizes() {
+  if (!chart) return;
+  _syncingPanes = true;
+  try {
+    syncPaneChartSizesInner();
+  } finally {
+    _syncingPanes = false;
+  }
+}
+function syncPaneChartSizesInner() {
+  // 第三個參數 forceRepaint 一定要 true：不給的話 v4 只改外層 div 的 style，
+  // 內部畫布與價格軸要等下一次 rAF 才跟上，而下面的 redrawDrawings() 會先用到舊的
+  // priceToCoordinate，畫出來的線就會整條偏掉一幀（甚至沒有下一次重畫就永久偏）
+  const el = $('chart');
+  if (el && el.clientWidth > 0 && el.clientHeight > 0) {
+    try {
+      chart.resize(el.clientWidth, el.clientHeight, true);
+    } catch {}
+  }
+  for (const name of Object.keys(subCharts)) {
+    const box = document.querySelector(`#subpane-${name} .subpane-chart`);
+    if (!box || !box.clientWidth || !box.clientHeight) continue;
+    try {
+      subCharts[name].chart.resize(box.clientWidth, box.clientHeight, true);
+    } catch {}
+  }
+  // ResizeObserver 也會補這兩步，但它是下一幀才到；拖曳放手當下要立刻正確
+  resizeDrawCanvas();
+  redrawDrawings();
+}
+
+function initPaneResizer() {
+  const bar = $('pane-resizer');
+  if (!bar) return;
+  state.settings.sideWidth = clampSideWidth(state.settings.sideWidth || PANE_DEFAULT.width);
+  state.settings.sideHeight = clampSideHeight(state.settings.sideHeight || PANE_DEFAULT.height);
+  applyPaneVars();
+
+  let dragging = false,
+    column = false;
+
+  const moveTo = (ev) => {
+    const rect = $('main-pane').getBoundingClientRect();
+    if (column) state.settings.sideHeight = clampSideHeight(rect.bottom - ev.clientY);
+    else state.settings.sideWidth = clampSideWidth(rect.right - ev.clientX);
+    applyPaneVars();
+  };
+
+  bar.addEventListener('pointerdown', (ev) => {
+    if (ev.button != null && ev.button !== 0) return;
+    dragging = true;
+    column = isPaneColumn();
+    try {
+      bar.setPointerCapture(ev.pointerId);
+    } catch {} // 抓不到 capture 也不該讓整個拖曳掛掉
+    bar.classList.add('dragging');
+    document.body.classList.add('pane-resizing');
+    document.body.classList.toggle('row', column);
+    ev.preventDefault();
+  });
+
+  bar.addEventListener('pointermove', (ev) => {
+    if (!dragging) return;
+    ev.preventDefault();
+    moveTo(ev);
+    // 拖曳中用 rAF 節流重量級的圖表重算；放手時另有一次同步的完整更新兜底
+    if (!_paneRaf)
+      _paneRaf = requestAnimationFrame(() => {
+        _paneRaf = 0;
+        syncPaneChartSizes();
+      });
+  });
+
+  const end = (ev) => {
+    if (!dragging) return;
+    dragging = false;
+    try {
+      bar.releasePointerCapture(ev.pointerId);
+    } catch {}
+    bar.classList.remove('dragging');
+    document.body.classList.remove('pane-resizing', 'row');
+    if (_paneRaf) {
+      cancelAnimationFrame(_paneRaf);
+      _paneRaf = 0;
+    }
+    moveTo(ev);
+    syncPaneChartSizes(); // 最終狀態一定同步跑完一次，不依賴 rAF 是否有排到
+    saveStorage();
+  };
+  bar.addEventListener('pointerup', end);
+  bar.addEventListener('pointercancel', end);
+
+  bar.addEventListener('dblclick', () => {
+    if (isPaneColumn()) state.settings.sideHeight = clampSideHeight(PANE_DEFAULT.height);
+    else state.settings.sideWidth = clampSideWidth(PANE_DEFAULT.width);
+    applyPaneVars();
+    syncPaneChartSizes();
+    saveStorage();
+    showToast('版面已回復預設', 'success');
+  });
+}
+
+// TV 式左上角 legend（symbol · 週期 · O H L C ±chg）
+function updateLegend(c, time) {
+  if (!c) {
+    c = state.candles[state.cursorIndex];
+    time = c ? c.time : null;
+  }
+  if (!c) {
+    $('chart-overlay').innerHTML = '';
+    return;
+  }
+  // 折線/面積圖的 seriesData 只有 value
+  if (c.close == null && c.value != null)
+    c = { open: c.value, high: c.value, low: c.value, close: c.value };
+  const ch = c.close - c.open;
+  const chPct = c.open ? (ch / c.open) * 100 : 0;
+  const chColor = ch >= 0 ? '#26a69a' : '#f7525f';
+  const tfLabel = state.timeframe === '1d' ? 'D' : '1H';
+  $('chart-overlay').innerHTML = `
+    <span class="price">${symLabel(state.symbol)}</span> · ${tfLabel} · ${state.blind ? '❓' : time ? fmtDateTime(time, state.timeframe) : '—'}<br>
+    O <span class="price" style="color:${chColor}">${fmtPrice(c.open)}</span>
+    H <span class="price" style="color:${chColor}">${fmtPrice(c.high)}</span>
+    L <span class="price" style="color:${chColor}">${fmtPrice(c.low)}</span>
+    C <span class="price" style="color:${chColor}">${fmtPrice(c.close)}</span>
+    <span style="color:${chColor}">${ch >= 0 ? '+' : ''}${fmtPrice(ch)} (${ch >= 0 ? '+' : ''}${chPct.toFixed(2)}%)</span>
+  `;
+}
+
+// ---- 圖表類型（TV 式：K棒 / 美國線 / 折線 / 面積）----
+function mainSeriesData(visible) {
+  const t = state.settings.chartType || 'candles';
+  if (t === 'line' || t === 'area') return visible.map((c) => ({ time: c.time, value: c.close }));
+  return visible;
+}
+function applyChartType() {
+  if (!chart) return;
+  const t = state.settings.chartType || 'candles';
+  const old = candleSeries;
+  let s;
+  if (t === 'bars') {
+    s = chart.addBarSeries({ upColor: '#089981', downColor: '#f23645', thinBars: false });
+  } else if (t === 'line') {
+    s = chart.addLineSeries({ color: '#2962ff', lineWidth: 2 });
+  } else if (t === 'area') {
+    s = chart.addAreaSeries({
+      lineColor: '#2962ff',
+      lineWidth: 2,
+      topColor: 'rgba(41,98,255,0.3)',
+      bottomColor: 'rgba(41,98,255,0.02)',
+    });
+  } else {
+    s = chart.addCandlestickSeries({
+      upColor: '#089981',
+      downColor: '#f23645',
+      borderUpColor: '#089981',
+      borderDownColor: '#f23645',
+      wickUpColor: '#089981',
+      wickDownColor: '#f23645',
+    });
+  }
+  candleSeries = s;
+  if (old) {
+    try {
+      chart.removeSeries(old);
+    } catch {}
+  }
+  // 舊 series 的價位線已隨之銷毀
+  posLines = [];
+  posLineMap.clear();
+  applyPriceFormat();
+  $$('#ctype-seg button').forEach((b) => b.classList.toggle('active', b.dataset.ctype === t));
+}
+function setChartType(t) {
+  state.settings.chartType = t;
+  applyChartType();
+  renderChart();
+  saveStorage();
+}
+
+// 依當前資料價位調整價格軸小數位（低價幣需要更多位數）
+function applyPriceFormat() {
+  if (!candleSeries) return;
+  const last = state.candles[state.candles.length - 1];
+  const dp = priceDp(last ? last.close : 100);
+  candleSeries.applyOptions({
+    priceFormat: { type: 'price', precision: dp, minMove: Math.pow(10, -dp) },
+  });
+}
+
+function renderChart() {
+  if (!candleSeries) return;
+  const visible = state.candles.slice(0, state.cursorIndex + 1);
+  candleSeries.setData(mainSeriesData(visible));
+  updateLegend(null, null);
+  // Draw position lines
+  redrawPositionLines();
+  // Update indicators based on visible candles
+  renderIndicators(visible);
+  // Auto-scroll to last
+  if (visible.length > 0) {
+    const len = visible.length;
+    const from = Math.max(0, len - 120);
+    chart.timeScale().setVisibleLogicalRange({ from, to: len + 5 });
+  }
+  redrawDrawings();
+}
+
+// ============================================================
+// Indicators: calc + render
+// ============================================================
+
+// ---- Calculations ----
+function calcEMA(candles, period) {
+  if (candles.length < period) return [];
+  const k = 2 / (period + 1);
+  const out = [];
+  let sum = 0;
+  for (let i = 0; i < period; i++) sum += candles[i].close;
+  let ema = sum / period;
+  out.push({ time: candles[period - 1].time, value: ema });
+  for (let i = period; i < candles.length; i++) {
+    ema = candles[i].close * k + ema * (1 - k);
+    out.push({ time: candles[i].time, value: ema });
+  }
+  return out;
+}
+function calcBB(candles, period, stdMul) {
+  if (candles.length < period) return { upper: [], middle: [], lower: [] };
+  const upper = [],
+    middle = [],
+    lower = [];
+  for (let i = period - 1; i < candles.length; i++) {
+    let sum = 0;
+    for (let j = 0; j < period; j++) sum += candles[i - j].close;
+    const mean = sum / period;
+    let varSum = 0;
+    for (let j = 0; j < period; j++) {
+      varSum += (candles[i - j].close - mean) ** 2;
+    }
+    const std = Math.sqrt(varSum / period);
+    const t = candles[i].time;
+    upper.push({ time: t, value: mean + std * stdMul });
+    middle.push({ time: t, value: mean });
+    lower.push({ time: t, value: mean - std * stdMul });
+  }
+  return { upper, middle, lower };
+}
+function calcRSI(candles, period) {
+  if (candles.length < period + 1) return [];
+  const out = [];
+  let gains = 0,
+    losses = 0;
+  for (let i = 1; i <= period; i++) {
+    const ch = candles[i].close - candles[i - 1].close;
+    if (ch > 0) gains += ch;
+    else losses -= ch;
+  }
+  let avgG = gains / period,
+    avgL = losses / period;
+  const rsi = (g, l) => (l === 0 ? 100 : 100 - 100 / (1 + g / l));
+  out.push({ time: candles[period].time, value: rsi(avgG, avgL) });
+  for (let i = period + 1; i < candles.length; i++) {
+    const ch = candles[i].close - candles[i - 1].close;
+    const g = ch > 0 ? ch : 0;
+    const l = ch < 0 ? -ch : 0;
+    avgG = (avgG * (period - 1) + g) / period;
+    avgL = (avgL * (period - 1) + l) / period;
+    out.push({ time: candles[i].time, value: rsi(avgG, avgL) });
+  }
+  return out;
+}
+function calcEMAOnSeries(values, period) {
+  if (values.length < period) return [];
+  const k = 2 / (period + 1);
+  const out = [];
+  let sum = 0;
+  for (let i = 0; i < period; i++) sum += values[i].value;
+  let e = sum / period;
+  out.push({ time: values[period - 1].time, value: e });
+  for (let i = period; i < values.length; i++) {
+    e = values[i].value * k + e * (1 - k);
+    out.push({ time: values[i].time, value: e });
+  }
+  return out;
+}
+function calcMACD(candles, fastP, slowP, signalP) {
+  const fast = calcEMA(candles, fastP);
+  const slow = calcEMA(candles, slowP);
+  const slowMap = new Map(slow.map((x) => [x.time, x.value]));
+  const macd = [];
+  for (const f of fast) {
+    if (slowMap.has(f.time)) macd.push({ time: f.time, value: f.value - slowMap.get(f.time) });
+  }
+  const signal = calcEMAOnSeries(macd, signalP);
+  const sigMap = new Map(signal.map((x) => [x.time, x.value]));
+  const hist = [];
+  for (const m of macd) {
+    if (sigMap.has(m.time)) {
+      const v = m.value - sigMap.get(m.time);
+      hist.push({
+        time: m.time,
+        value: v,
+        color: v >= 0 ? 'rgba(8,153,129,0.7)' : 'rgba(242,54,69,0.7)',
+      });
+    }
+  }
+  return { macd, signal, hist };
+}
+
+// ---- 新增指標計算（TV 免費常用指標）----
+function calcSMA(candles, period) {
+  if (candles.length < period) return [];
+  const out = [];
+  let sum = 0;
+  for (let i = 0; i < candles.length; i++) {
+    sum += candles[i].close;
+    if (i >= period) sum -= candles[i - period].close;
+    if (i >= period - 1) out.push({ time: candles[i].time, value: sum / period });
+  }
+  return out;
+}
+// VWAP：1h 每日重置（TV 標準）；1d 以資料起點錨定
+function calcVWAP(candles, tf) {
+  const out = [];
+  let cumPV = 0,
+    cumV = 0,
+    curDay = null;
+  for (const c of candles) {
+    if (tf !== '1d') {
+      const day = Math.floor((c.time + 8 * 3600) / 86400);
+      if (day !== curDay) {
+        curDay = day;
+        cumPV = 0;
+        cumV = 0;
+      }
+    }
+    const tp = (c.high + c.low + c.close) / 3;
+    cumPV += tp * (c.volume || 0);
+    cumV += c.volume || 0;
+    out.push({ time: c.time, value: cumV > 0 ? cumPV / cumV : tp });
+  }
+  return out;
+}
+function smaOnSeries(arr, p) {
+  const o = [];
+  let sum = 0;
+  for (let i = 0; i < arr.length; i++) {
+    sum += arr[i].value;
+    if (i >= p) sum -= arr[i - p].value;
+    if (i >= p - 1) o.push({ time: arr[i].time, value: sum / p });
+  }
+  return o;
+}
+function calcStoch(candles, kP, kSmooth, dP) {
+  if (candles.length < kP) return { k: [], d: [] };
+  const raw = [];
+  for (let i = kP - 1; i < candles.length; i++) {
+    let hh = -Infinity,
+      ll = Infinity;
+    for (let j = 0; j < kP; j++) {
+      hh = Math.max(hh, candles[i - j].high);
+      ll = Math.min(ll, candles[i - j].low);
+    }
+    raw.push({
+      time: candles[i].time,
+      value: hh === ll ? 50 : ((candles[i].close - ll) / (hh - ll)) * 100,
+    });
+  }
+  const k = smaOnSeries(raw, kSmooth);
+  const d = smaOnSeries(k, dP);
+  return { k, d };
+}
+const trueRangeAt = (c, i) =>
+  Math.max(
+    c[i].high - c[i].low,
+    Math.abs(c[i].high - c[i - 1].close),
+    Math.abs(c[i].low - c[i - 1].close),
+  );
+function calcATR(candles, period) {
+  // Wilder
+  if (candles.length < period + 1) return [];
+  const out = [];
+  let atr = 0;
+  for (let i = 1; i <= period; i++) atr += trueRangeAt(candles, i);
+  atr /= period;
+  out.push({ time: candles[period].time, value: atr });
+  for (let i = period + 1; i < candles.length; i++) {
+    atr = (atr * (period - 1) + trueRangeAt(candles, i)) / period;
+    out.push({ time: candles[i].time, value: atr });
+  }
+  return out;
+}
+function calcCCI(candles, period) {
+  if (candles.length < period) return [];
+  const tp = candles.map((c) => (c.high + c.low + c.close) / 3);
+  const out = [];
+  for (let i = period - 1; i < candles.length; i++) {
+    let sum = 0;
+    for (let j = 0; j < period; j++) sum += tp[i - j];
+    const mean = sum / period;
+    let dev = 0;
+    for (let j = 0; j < period; j++) dev += Math.abs(tp[i - j] - mean);
+    dev /= period;
+    out.push({
+      time: candles[i].time,
+      value: dev === 0 ? 0 : (tp[i] - mean) / (0.015 * dev),
+    });
+  }
+  return out;
+}
+function calcOBV(candles) {
+  const out = [];
+  let obv = 0;
+  for (let i = 0; i < candles.length; i++) {
+    if (i > 0) {
+      if (candles[i].close > candles[i - 1].close) obv += candles[i].volume || 0;
+      else if (candles[i].close < candles[i - 1].close) obv -= candles[i].volume || 0;
+    }
+    out.push({ time: candles[i].time, value: obv });
+  }
+  return out;
+}
+function calcADX(candles, period) {
+  // Wilder DMI/ADX
+  if (candles.length < period * 2 + 1) return { adx: [], plus: [], minus: [] };
+  const pdmAt = (i) => {
+    const up = candles[i].high - candles[i - 1].high;
+    const dn = candles[i - 1].low - candles[i].low;
+    return up > dn && up > 0 ? up : 0;
+  };
+  const mdmAt = (i) => {
+    const up = candles[i].high - candles[i - 1].high;
+    const dn = candles[i - 1].low - candles[i].low;
+    return dn > up && dn > 0 ? dn : 0;
+  };
+  let trS = 0,
+    pdmS = 0,
+    mdmS = 0;
+  for (let i = 1; i <= period; i++) {
+    trS += trueRangeAt(candles, i);
+    pdmS += pdmAt(i);
+    mdmS += mdmAt(i);
+  }
+  const plus = [],
+    minus = [],
+    dxArr = [];
+  const emit = (i) => {
+    const pdi = trS === 0 ? 0 : (100 * pdmS) / trS;
+    const mdi = trS === 0 ? 0 : (100 * mdmS) / trS;
+    plus.push({ time: candles[i].time, value: pdi });
+    minus.push({ time: candles[i].time, value: mdi });
+    dxArr.push({
+      time: candles[i].time,
+      value: pdi + mdi === 0 ? 0 : (100 * Math.abs(pdi - mdi)) / (pdi + mdi),
+    });
+  };
+  emit(period);
+  for (let i = period + 1; i < candles.length; i++) {
+    trS = trS - trS / period + trueRangeAt(candles, i);
+    pdmS = pdmS - pdmS / period + pdmAt(i);
+    mdmS = mdmS - mdmS / period + mdmAt(i);
+    emit(i);
+  }
+  const adx = [];
+  if (dxArr.length >= period) {
+    let a = 0;
+    for (let i = 0; i < period; i++) a += dxArr[i].value;
+    a /= period;
+    adx.push({ time: dxArr[period - 1].time, value: a });
+    for (let i = period; i < dxArr.length; i++) {
+      a = (a * (period - 1) + dxArr[i].value) / period;
+      adx.push({ time: dxArr[i].time, value: a });
+    }
+  }
+  return { adx, plus, minus };
+}
+function calcSAR(candles, step, maxStep) {
+  if (candles.length < 5) return [];
+  const out = [];
+  let up = candles[1].close >= candles[0].close;
+  let sar = up ? candles[0].low : candles[0].high;
+  let ep = up ? candles[0].high : candles[0].low;
+  let af = step;
+  for (let i = 1; i < candles.length; i++) {
+    sar = sar + af * (ep - sar);
+    if (up) {
+      sar = Math.min(sar, candles[i - 1].low, candles[Math.max(0, i - 2)].low);
+      if (candles[i].low < sar) {
+        up = false;
+        sar = ep;
+        ep = candles[i].low;
+        af = step;
+      } else if (candles[i].high > ep) {
+        ep = candles[i].high;
+        af = Math.min(maxStep, af + step);
+      }
+    } else {
+      sar = Math.max(sar, candles[i - 1].high, candles[Math.max(0, i - 2)].high);
+      if (candles[i].high > sar) {
+        up = true;
+        sar = ep;
+        ep = candles[i].high;
+        af = step;
+      } else if (candles[i].low < ep) {
+        ep = candles[i].low;
+        af = Math.min(maxStep, af + step);
+      }
+    }
+    out.push({ time: candles[i].time, value: sar, up });
+  }
+  return out;
+}
+function calcSuperTrend(candles, period, mult) {
+  const atr = calcATR(candles, period);
+  if (!atr.length) return [];
+  const atrMap = new Map(atr.map((a) => [a.time, a.value]));
+  const out = [];
+  let fu = null,
+    fl = null,
+    trendUp = true,
+    prevClose = null;
+  for (const c of candles) {
+    const a = atrMap.get(c.time);
+    if (a == null) {
+      prevClose = c.close;
+      continue;
+    }
+    const mid = (c.high + c.low) / 2;
+    const bu = mid + mult * a;
+    const bl = mid - mult * a;
+    fu = fu == null || bu < fu || (prevClose != null && prevClose > fu) ? bu : fu;
+    fl = fl == null || bl > fl || (prevClose != null && prevClose < fl) ? bl : fl;
+    if (trendUp && c.close < fl) trendUp = false;
+    else if (!trendUp && c.close > fu) trendUp = true;
+    out.push({ time: c.time, value: trendUp ? fl : fu, up: trendUp });
+    prevClose = c.close;
+  }
+  return out;
+}
+function calcIchimoku(candles, tenkanP, kijunP, senkouP) {
+  const n = candles.length;
+  const midAt = (i, p) => {
+    let hh = -Infinity,
+      ll = Infinity;
+    for (let j = 0; j < p; j++) {
+      hh = Math.max(hh, candles[i - j].high);
+      ll = Math.min(ll, candles[i - j].low);
+    }
+    return (hh + ll) / 2;
+  };
+  const interval = n >= 2 ? Math.round((candles[n - 1].time - candles[0].time) / (n - 1)) : 86400;
+  const timeAt = (i) => (i < n ? candles[i].time : candles[n - 1].time + (i - n + 1) * interval);
+  const tenkan = [],
+    kijun = [],
+    senkouA = [],
+    senkouB = [],
+    chikou = [];
+  for (let i = 0; i < n; i++) {
+    if (i >= tenkanP - 1) tenkan.push({ time: candles[i].time, value: midAt(i, tenkanP) });
+    if (i >= kijunP - 1) kijun.push({ time: candles[i].time, value: midAt(i, kijunP) });
+    if (i >= Math.max(tenkanP, kijunP) - 1) {
+      senkouA.push({
+        time: timeAt(i + kijunP),
+        value: (midAt(i, tenkanP) + midAt(i, kijunP)) / 2,
+      });
+    }
+    if (i >= senkouP - 1) senkouB.push({ time: timeAt(i + kijunP), value: midAt(i, senkouP) });
+    if (i >= kijunP) chikou.push({ time: candles[i - kijunP].time, value: candles[i].close });
+  }
+  return { tenkan, kijun, senkouA, senkouB, chikou };
+}
+
+// ---- Series tracking ----
+let overlaySeriesList = []; // 主圖疊加 series（每次 render 重建）
+const subCharts = {}; // name -> { chart, series: {...} }
+let ichimokuCloudCache = null; // canvas 雲帶填色用
+let sarCache = null; // canvas SAR 點用
+
+function safeRemoveSeries(chartObj, series) {
+  if (!series || !chartObj) return;
+  try {
+    chartObj.removeSeries(series);
+  } catch {}
+}
+
+function clearAllIndicatorSeries() {
+  for (const s of overlaySeriesList) safeRemoveSeries(chart, s);
+  overlaySeriesList = [];
+  ichimokuCloudCache = null;
+  sarCache = null;
+}
+
+function addOverlayLine(opts, data) {
+  const s = chart.addLineSeries({
+    priceLineVisible: false,
+    lastValueVisible: false,
+    ...opts,
+  });
+  s.setData(data);
+  overlaySeriesList.push(s);
+  return s;
+}
+
+function ensureSubpane(name, label) {
+  const wrap = $('subpanes-wrap');
+  let pane = $(`subpane-${name}`);
+  if (!pane) {
+    pane = document.createElement('div');
+    pane.id = `subpane-${name}`;
+    pane.className = 'subpane';
+    pane.innerHTML = `<div class="subpane-label"></div><div class="subpane-chart"></div>`;
+    wrap.appendChild(pane);
+  }
+  pane.querySelector('.subpane-label').textContent = label;
+  return pane;
+}
+function destroySubpane(name) {
+  const pane = $(`subpane-${name}`);
+  if (pane) pane.remove();
+}
+// 泛用子圖：build(chart) 回傳 series map，只建一次
+function getSubChart(name, label, build) {
+  const pane = ensureSubpane(name, label);
+  if (!subCharts[name]) {
+    const c = createSubChart(pane);
+    subCharts[name] = { chart: c, series: build(c) };
+  }
+  return subCharts[name];
+}
+function dropSubChart(name) {
+  const sc = subCharts[name];
+  if (!sc) return;
+  try {
+    sc.chart.remove();
+  } catch {}
+  delete subCharts[name];
+  destroySubpane(name);
+}
+
+function createSubChart(paneEl) {
+  const inner = paneEl.querySelector('.subpane-chart');
+  const c = LightweightCharts.createChart(inner, {
+    layout: { background: { color: '#131722' }, textColor: '#9598a1' },
+    grid: {
+      vertLines: { color: 'rgba(42,46,57,0.35)' },
+      horzLines: { color: 'rgba(42,46,57,0.55)' },
+    },
+    rightPriceScale: { borderColor: '#2a2e39' },
+    timeScale: { visible: false, borderVisible: false },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    handleScroll: false,
+    handleScale: false,
+  });
+  return c;
+}
+
+// Sync subpane time axes with main chart
+function syncSubpaneRanges(range) {
+  if (!range) return;
+  for (const sc of Object.values(subCharts)) {
+    try {
+      sc.chart.timeScale().setVisibleLogicalRange(range);
+    } catch {}
+  }
+}
+
+function renderIndicators(visible) {
+  if (!chart || !candleSeries) return;
+  const ind = state.indicators;
+  clearAllIndicatorSeries();
+
+  // ---- 主圖疊加 ----
+  ind.ema.forEach((cfg) => {
+    if (!cfg.enabled) return;
+    const data = calcEMA(visible, cfg.period);
+    if (data.length)
+      addOverlayLine(
+        {
+          color: cfg.color,
+          lineWidth: 1.5,
+          lastValueVisible: true,
+          title: `EMA${cfg.period}`,
+        },
+        data,
+      );
+  });
+  ind.sma.forEach((cfg) => {
+    if (!cfg.enabled) return;
+    const data = calcSMA(visible, cfg.period);
+    if (data.length)
+      addOverlayLine(
+        {
+          color: cfg.color,
+          lineWidth: 1.5,
+          lastValueVisible: true,
+          title: `SMA${cfg.period}`,
+        },
+        data,
+      );
+  });
+  if (ind.bb.enabled) {
+    const { upper, middle, lower } = calcBB(visible, ind.bb.period, ind.bb.std);
+    addOverlayLine({ color: 'rgba(149,152,161,0.7)', lineWidth: 1, title: 'BB+' }, upper);
+    addOverlayLine(
+      { color: 'rgba(245,200,120,0.8)', lineWidth: 1, lineStyle: 2, title: 'BB ' },
+      middle,
+    );
+    addOverlayLine({ color: 'rgba(149,152,161,0.7)', lineWidth: 1, title: 'BB-' }, lower);
+  }
+  if (ind.vwap.enabled) {
+    const data = calcVWAP(visible, state.timeframe);
+    if (data.length)
+      addOverlayLine(
+        { color: ind.vwap.color, lineWidth: 1.5, lastValueVisible: true, title: 'VWAP' },
+        data,
+      );
+  }
+  if (ind.ichimoku.enabled) {
+    const m = calcIchimoku(visible, ind.ichimoku.tenkan, ind.ichimoku.kijun, ind.ichimoku.senkou);
+    addOverlayLine({ color: '#2962ff', lineWidth: 1, title: '轉換' }, m.tenkan);
+    addOverlayLine({ color: '#b71c1c', lineWidth: 1, title: '基準' }, m.kijun);
+    addOverlayLine({ color: 'rgba(8,153,129,0.55)', lineWidth: 1, title: '先行A' }, m.senkouA);
+    addOverlayLine({ color: 'rgba(242,54,69,0.55)', lineWidth: 1, title: '先行B' }, m.senkouB);
+    addOverlayLine({ color: '#43a047', lineWidth: 1, lineStyle: 1, title: '遲行' }, m.chikou);
+    ichimokuCloudCache = {
+      a: m.senkouA,
+      b: new Map(m.senkouB.map((x) => [x.time, x.value])),
+    };
+  }
+  if (ind.supertrend.enabled) {
+    const st = calcSuperTrend(visible, ind.supertrend.period, ind.supertrend.mult);
+    if (st.length) {
+      // 以 whitespace 斷開多空段
+      const upData = st.map((x) => (x.up ? { time: x.time, value: x.value } : { time: x.time }));
+      const dnData = st.map((x) => (!x.up ? { time: x.time, value: x.value } : { time: x.time }));
+      addOverlayLine({ color: '#089981', lineWidth: 2, title: 'ST' }, upData);
+      addOverlayLine({ color: '#f23645', lineWidth: 2 }, dnData);
+    }
+  }
+  if (ind.sar.enabled) {
+    sarCache = calcSAR(visible, ind.sar.step, ind.sar.max); // 以 canvas 畫點
+  }
+  if (ind.volume.enabled) {
+    const s = chart.addHistogramSeries({
+      priceFormat: { type: 'volume' },
+      priceScaleId: 'volume',
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+    chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.78, bottom: 0 } });
+    s.setData(
+      visible.map((c) => ({
+        time: c.time,
+        value: c.volume || 0,
+        color: c.close >= c.open ? 'rgba(8,153,129,0.5)' : 'rgba(242,54,69,0.5)',
+      })),
+    );
+    overlaySeriesList.push(s);
+  }
+
+  // ---- 副圖 ----
+  if (ind.rsi.enabled) {
+    const sc = getSubChart('rsi', `RSI(${ind.rsi.period})`, (c) => {
+      const line = c.addLineSeries({
+        color: '#7e57c2',
+        lineWidth: 1.5,
+        priceLineVisible: false,
+        lastValueVisible: true,
+      });
+      line.createPriceLine({
+        price: 70,
+        color: 'rgba(242,54,69,0.5)',
+        lineWidth: 1,
+        lineStyle: 2,
+        axisLabelVisible: false,
+      });
+      line.createPriceLine({
+        price: 30,
+        color: 'rgba(8,153,129,0.5)',
+        lineWidth: 1,
+        lineStyle: 2,
+        axisLabelVisible: false,
+      });
+      line.createPriceLine({
+        price: 50,
+        color: 'rgba(149,152,161,0.3)',
+        lineWidth: 1,
+        lineStyle: 0,
+        axisLabelVisible: false,
+      });
+      return { line };
+    });
+    sc.series.line.setData(calcRSI(visible, ind.rsi.period));
+  } else dropSubChart('rsi');
+
+  if (ind.macd.enabled) {
+    const cfg = ind.macd;
+    const sc = getSubChart('macd', `MACD(${cfg.fast},${cfg.slow},${cfg.signal})`, (c) => {
+      const hist = c.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false });
+      const line = c.addLineSeries({
+        color: '#2962ff',
+        lineWidth: 1.5,
+        priceLineVisible: false,
+        lastValueVisible: true,
+        title: 'MACD',
+      });
+      const signal = c.addLineSeries({
+        color: '#ff6d00',
+        lineWidth: 1.5,
+        priceLineVisible: false,
+        lastValueVisible: true,
+        title: 'Signal',
+      });
+      line.createPriceLine({
+        price: 0,
+        color: 'rgba(149,152,161,0.4)',
+        lineWidth: 1,
+        lineStyle: 2,
+        axisLabelVisible: false,
+      });
+      return { hist, line, signal };
+    });
+    const m = calcMACD(visible, cfg.fast, cfg.slow, cfg.signal);
+    sc.series.hist.setData(m.hist);
+    sc.series.line.setData(m.macd);
+    sc.series.signal.setData(m.signal);
+  } else dropSubChart('macd');
+
+  if (ind.stoch.enabled) {
+    const cfg = ind.stoch;
+    const sc = getSubChart('stoch', `KD 隨機(${cfg.k},${cfg.kSmooth},${cfg.d})`, (c) => {
+      const k = c.addLineSeries({
+        color: '#2962ff',
+        lineWidth: 1.5,
+        priceLineVisible: false,
+        lastValueVisible: true,
+        title: 'K',
+      });
+      const d = c.addLineSeries({
+        color: '#ff6d00',
+        lineWidth: 1.5,
+        priceLineVisible: false,
+        lastValueVisible: true,
+        title: 'D',
+      });
+      k.createPriceLine({
+        price: 80,
+        color: 'rgba(242,54,69,0.5)',
+        lineWidth: 1,
+        lineStyle: 2,
+        axisLabelVisible: false,
+      });
+      k.createPriceLine({
+        price: 20,
+        color: 'rgba(8,153,129,0.5)',
+        lineWidth: 1,
+        lineStyle: 2,
+        axisLabelVisible: false,
+      });
+      return { k, d };
+    });
+    const kd = calcStoch(visible, cfg.k, cfg.kSmooth, cfg.d);
+    sc.series.k.setData(kd.k);
+    sc.series.d.setData(kd.d);
+  } else dropSubChart('stoch');
+
+  if (ind.atr.enabled) {
+    const sc = getSubChart('atr', `ATR(${ind.atr.period})`, (c) => ({
+      line: c.addLineSeries({
+        color: '#f5c878',
+        lineWidth: 1.5,
+        priceLineVisible: false,
+        lastValueVisible: true,
+      }),
+    }));
+    sc.series.line.setData(calcATR(visible, ind.atr.period));
+  } else dropSubChart('atr');
+
+  if (ind.cci.enabled) {
+    const sc = getSubChart('cci', `CCI(${ind.cci.period})`, (c) => {
+      const line = c.addLineSeries({
+        color: '#26c6da',
+        lineWidth: 1.5,
+        priceLineVisible: false,
+        lastValueVisible: true,
+      });
+      line.createPriceLine({
+        price: 100,
+        color: 'rgba(242,54,69,0.5)',
+        lineWidth: 1,
+        lineStyle: 2,
+        axisLabelVisible: false,
+      });
+      line.createPriceLine({
+        price: -100,
+        color: 'rgba(8,153,129,0.5)',
+        lineWidth: 1,
+        lineStyle: 2,
+        axisLabelVisible: false,
+      });
+      line.createPriceLine({
+        price: 0,
+        color: 'rgba(149,152,161,0.3)',
+        lineWidth: 1,
+        lineStyle: 0,
+        axisLabelVisible: false,
+      });
+      return { line };
+    });
+    sc.series.line.setData(calcCCI(visible, ind.cci.period));
+  } else dropSubChart('cci');
+
+  if (ind.obv.enabled) {
+    const sc = getSubChart('obv', 'OBV 能量潮', (c) => ({
+      line: c.addLineSeries({
+        color: '#90a4ae',
+        lineWidth: 1.5,
+        priceLineVisible: false,
+        lastValueVisible: true,
+      }),
+    }));
+    sc.series.line.setData(calcOBV(visible));
+  } else dropSubChart('obv');
+
+  if (ind.adx.enabled) {
+    const sc = getSubChart('adx', `ADX/DMI(${ind.adx.period})`, (c) => {
+      const adx = c.addLineSeries({
+        color: '#f5c878',
+        lineWidth: 2,
+        priceLineVisible: false,
+        lastValueVisible: true,
+        title: 'ADX',
+      });
+      const plus = c.addLineSeries({
+        color: '#089981',
+        lineWidth: 1,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        title: '+DI',
+      });
+      const minus = c.addLineSeries({
+        color: '#f23645',
+        lineWidth: 1,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        title: '-DI',
+      });
+      adx.createPriceLine({
+        price: 25,
+        color: 'rgba(149,152,161,0.4)',
+        lineWidth: 1,
+        lineStyle: 2,
+        axisLabelVisible: false,
+      });
+      return { adx, plus, minus };
+    });
+    const m = calcADX(visible, ind.adx.period);
+    sc.series.adx.setData(m.adx);
+    sc.series.plus.setData(m.plus);
+    sc.series.minus.setData(m.minus);
+  } else dropSubChart('adx');
+
+  // Sync subpane time scales to main chart visible range
+  try {
+    const range = chart.timeScale().getVisibleLogicalRange();
+    syncSubpaneRanges(range);
+  } catch {}
+}
+
+// ============================================================
+// Drawing tools (canvas overlay)
+// ============================================================
+let drawCanvas, drawCtx;
+function initDrawCanvas() {
+  drawCanvas = $('draw-canvas');
+  drawCtx = drawCanvas.getContext('2d');
+  resizeDrawCanvas();
+  // Resize observer：改成走 syncPaneChartSizes()，讓圖表尺寸由「容器實際大小」驅動。
+  // 原本只重畫 draw-canvas、沒有 resize 主圖表，所以任何沒有伴隨 window resize 事件的
+  // 容器變化（iOS 轉向後的延遲、網址列收合、側欄拖曳）都會留下一張比容器大的畫布。
+  const ro = new ResizeObserver(() => {
+    if (_syncingPanes) return; // resize 圖表不會改到 .chart-wrap，但別讓 RO 自我遞迴
+    syncPaneChartSizes();
+  });
+  ro.observe(drawCanvas.parentElement);
+
+  // Hook into chart pan/zoom for redraw
+  chart.timeScale().subscribeVisibleTimeRangeChange(redrawDrawings);
+  chart.timeScale().subscribeVisibleLogicalRangeChange(redrawDrawings);
+
+  // Click - record drawing point
+  chart.subscribeClick((param) => {
+    if (!state.tool || !param.time || !param.point) return;
+    const price = candleSeries.coordinateToPrice(param.point.y);
+    if (price == null) return;
+    handleToolClick(param.time, price);
+  });
+
+  // Crosshair - preview while drawing
+  chart.subscribeCrosshairMove((param) => {
+    if (!state.tool || !state.pendingPoints.length) {
+      // Update default chart-overlay cursor info (preserved from original)
+      return;
+    }
+    if (!param.time || !param.point) return;
+    const price = candleSeries.coordinateToPrice(param.point.y);
+    if (price == null) return;
+    state.hoverPoint = { time: param.time, price: snapPrice(param.time, price) };
+    redrawDrawings();
+  });
+}
+
+function resizeDrawCanvas() {
+  if (!drawCanvas) return;
+  const rect = drawCanvas.parentElement.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  drawCanvas.width = Math.floor(rect.width * dpr);
+  drawCanvas.height = Math.floor(rect.height * dpr);
+  drawCanvas.style.width = rect.width + 'px';
+  drawCanvas.style.height = rect.height + 'px';
+  drawCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function timeToX(time) {
+  const x = chart.timeScale().timeToCoordinate(time);
+  return x == null ? null : x;
+}
+// 時間 → 最接近的 K 棒索引（繪圖平移用：日線有週末假日缺口，
+// 直接對時間戳加減會落在沒有 K 棒的時間，圖形就會變成畫不出也點不到的幽靈）
+function timeToIndex(time) {
+  const arr = state.candles;
+  if (!arr.length) return -1;
+  let lo = 0,
+    hi = arr.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (arr[mid].time < time) lo = mid + 1;
+    else hi = mid;
+  }
+  if (lo > 0 && Math.abs(arr[lo - 1].time - time) <= Math.abs(arr[lo].time - time)) return lo - 1;
+  return lo;
+}
+function priceToY(price) {
+  return candleSeries.priceToCoordinate(price);
+}
+
+// 選取繪圖時的浮動操作列（顯示類型 + 刪除鈕）；redrawDrawings 每次都會同步，狀態不會漏
+const DRAW_TYPE_LABEL = {
+  trend: '趨勢線',
+  hline: '水平線',
+  rect: '矩形',
+  fib: '斐波那契',
+  ray: '射線',
+  extline: '延伸線',
+  vline: '垂直線',
+  channel: '平行通道',
+  ellipse: '橢圓',
+  arrow: '箭頭',
+  text: '文字',
+  pricelabel: '價格標籤',
+  measure: '測量',
+};
+function updateDrawSelectedBar() {
+  const bar = $('draw-selected-bar');
+  if (!bar) return;
+  const d = state.selectedDrawingId
+    ? getCurrentDrawings().find((x) => x.id === state.selectedDrawingId)
+    : null;
+  if (d) {
+    $('dsb-label').textContent = DRAW_TYPE_LABEL[d.type] || '繪圖';
+    bar.style.display = 'flex';
+  } else {
+    bar.style.display = 'none';
+  }
+}
+
+function redrawDrawings() {
+  if (!drawCtx || !drawCanvas) return;
+  updateDrawSelectedBar();
+  const w = drawCanvas.parentElement.clientWidth;
+  const h = drawCanvas.parentElement.clientHeight;
+  drawCtx.clearRect(0, 0, w, h);
+  drawIndicatorCanvas(); // 一目雲帶 + SAR 點（最底層）
+  drawOpenPositionZones(); // 持倉止盈/止損紅綠區
+  if (!state.drawingsHidden) {
+    for (const d of getCurrentDrawings()) {
+      drawShape(d, false);
+    }
+  }
+  // Preview while drawing - use active template style for the tool
+  if (!state.drawingsHidden && state.tool && state.pendingPoints.length && state.hoverPoint) {
+    const previewShape = {
+      type: state.tool,
+      points: [...state.pendingPoints, state.hoverPoint],
+      style: getActiveTplStyle(state.tool),
+    };
+    drawShape(previewShape, true);
+  }
+  drawPosToolOverlay(); // 圖表下單部位工具（最上層）
+}
+
+// ---- 指標 canvas 疊加：一目雲帶 + SAR ----
+function drawIndicatorCanvas() {
+  if (!candleSeries) return;
+  if (ichimokuCloudCache) {
+    const { a, b } = ichimokuCloudCache;
+    drawCtx.save();
+    for (let i = 0; i < a.length - 1; i++) {
+      const t1 = a[i].time,
+        t2 = a[i + 1].time;
+      const b1 = b.get(t1),
+        b2 = b.get(t2);
+      if (b1 == null || b2 == null) continue;
+      const x1 = timeToX(t1),
+        x2 = timeToX(t2);
+      if (x1 == null || x2 == null) continue;
+      const ya1 = priceToY(a[i].value),
+        ya2 = priceToY(a[i + 1].value);
+      const yb1 = priceToY(b1),
+        yb2 = priceToY(b2);
+      if (ya1 == null || ya2 == null || yb1 == null || yb2 == null) continue;
+      const bull = ya1 + ya2 <= yb1 + yb2; // 先行A 在上 → 多方雲
+      drawCtx.fillStyle = bull ? 'rgba(8,153,129,0.10)' : 'rgba(242,54,69,0.10)';
+      drawCtx.beginPath();
+      drawCtx.moveTo(x1, ya1);
+      drawCtx.lineTo(x2, ya2);
+      drawCtx.lineTo(x2, yb2);
+      drawCtx.lineTo(x1, yb1);
+      drawCtx.closePath();
+      drawCtx.fill();
+    }
+    drawCtx.restore();
+  }
+  if (sarCache) {
+    drawCtx.save();
+    for (const pt of sarCache) {
+      const x = timeToX(pt.time);
+      if (x == null) continue;
+      const y = priceToY(pt.value);
+      if (y == null) continue;
+      drawCtx.fillStyle = pt.up ? '#089981' : '#f23645';
+      drawCtx.beginPath();
+      drawCtx.arc(x, y, 1.8, 0, Math.PI * 2);
+      drawCtx.fill();
+    }
+    drawCtx.restore();
+  }
+}
+
+// ---- 持倉止盈/止損區塊（TV 式紅綠色帶）----
+function drawOpenPositionZones() {
+  if (!candleSeries) return;
+  const w = drawCanvas.parentElement.clientWidth;
+  for (const p of state.positions) {
+    if (p.status !== 'open') continue;
+    if (p.symbol !== state.symbol || p.timeframe !== state.timeframe || !inScope(p)) continue;
+    // 停損/停利選填：只畫有設定那一側的色帶
+    const yE = priceToY(p.entryPrice);
+    if (yE == null) continue;
+    const yT = p.takeProfit != null ? priceToY(p.takeProfit) : null;
+    const yS = p.stopLoss != null ? priceToY(p.stopLoss) : null;
+    let x0 = timeToX(p.entryTime);
+    if (x0 == null || x0 < 0) x0 = 0;
+    drawCtx.save();
+    if (yT != null) {
+      drawCtx.fillStyle = 'rgba(8,153,129,0.10)';
+      drawCtx.fillRect(x0, Math.min(yE, yT), w - x0, Math.abs(yT - yE));
+    }
+    if (yS != null) {
+      drawCtx.fillStyle = 'rgba(242,54,69,0.10)';
+      drawCtx.fillRect(x0, Math.min(yE, yS), w - x0, Math.abs(yS - yE));
+    }
+    drawCtx.restore();
+  }
+}
+
+// ---- TV 式圖表下單部位工具 ----
+function drawPosToolOverlay() {
+  const pt = state.posTool;
+  if (!pt || !candleSeries) return;
+  const w = drawCanvas.parentElement.clientWidth;
+  const yE = priceToY(pt.entry),
+    yT = priceToY(pt.tp),
+    yS = priceToY(pt.sl);
+  if (yE == null || yT == null || yS == null) return;
+  const cur = state.candles[state.cursorIndex];
+  let x0 = cur ? timeToX(cur.time) : null;
+  if (x0 == null) x0 = Math.floor(w * 0.55);
+  x0 = Math.max(0, Math.min(x0, w - 60));
+  const { size, riskAmount } = calcOrderSize(
+    pt.entry,
+    pt.sl,
+    +$('order-risk').value || 1,
+    state.settings.balance,
+  );
+  const pv = getPointValue(state.symbol);
+  const gain = Math.abs(pt.tp - pt.entry) * pv * size;
+  const dist = Math.abs(pt.entry - pt.sl);
+  const rr = dist > 0 ? Math.abs(pt.tp - pt.entry) / dist : 0;
+  drawCtx.save();
+  drawCtx.fillStyle = 'rgba(8,153,129,0.18)';
+  drawCtx.fillRect(x0, Math.min(yE, yT), w - x0, Math.abs(yT - yE));
+  drawCtx.fillStyle = 'rgba(242,54,69,0.18)';
+  drawCtx.fillRect(x0, Math.min(yE, yS), w - x0, Math.abs(yS - yE));
+  const line = (y, color, dash) => {
+    drawCtx.strokeStyle = color;
+    drawCtx.lineWidth = 1.5;
+    drawCtx.setLineDash(dash || []);
+    drawCtx.beginPath();
+    drawCtx.moveTo(x0, y);
+    drawCtx.lineTo(w, y);
+    drawCtx.stroke();
+    drawCtx.setLineDash([]);
+  };
+  line(yT, '#089981');
+  line(yS, '#f23645');
+  line(yE, '#b2b5be', [5, 4]);
+  drawLabelChip(
+    `目標 ${fmtPrice(pt.tp)}  ${fmtMoneySigned(gain)}  (${rr.toFixed(2)}R)`,
+    x0 + 8,
+    yT - 10,
+    '#089981',
+    'left',
+  );
+  drawLabelChip(
+    `${pt.side === 'long' ? '多' : '空'}單進場 ${fmtPrice(pt.entry)} ⇕`,
+    x0 + 8,
+    yE - 10,
+    '#b2b5be',
+    'left',
+  );
+  drawLabelChip(
+    `停損 ${fmtPrice(pt.sl)}  ${fmtMoneySigned(-riskAmount)}`,
+    x0 + 8,
+    yS + 12,
+    '#f23645',
+    'left',
+  );
+  drawCtx.restore();
+}
+
+function posToolHitAtY(y) {
+  const pt = state.posTool;
+  if (!pt || !candleSeries) return null;
+  const HIT = 6;
+  const yT = priceToY(pt.tp),
+    yS = priceToY(pt.sl),
+    yE = priceToY(pt.entry);
+  if (yT != null && Math.abs(y - yT) <= HIT) return 'tp';
+  if (yS != null && Math.abs(y - yS) <= HIT) return 'sl';
+  if (yE != null && Math.abs(y - yE) <= HIT) return 'entry';
+  return null;
+}
+
+function setPosTool(side) {
+  const c = state.candles[state.cursorIndex];
+  if (!c) {
+    showToast('請先載入資料', 'error');
+    return;
+  }
+  if (state.posTool && state.posTool.side === side) {
+    clearPosTool();
+    return;
+  } // 再按一次關閉
+  const dp = priceDp(c.close);
+  const r = (v) => +v.toFixed(dp);
+  const dir = side === 'long' ? 1 : -1;
+  state.posTool = {
+    side,
+    entry: r(c.close),
+    sl: r(c.close * (1 - 0.005 * dir)),
+    tp: r(c.close * (1 + 0.01 * dir)),
+  };
+  setTool(''); // 關閉畫圖工具避免點擊衝突
+  setOrderSide(side);
+  syncPosToolToForm();
+  updatePosToolButtons();
+  redrawDrawings();
+  switchSidePane('order');
+  showToast(
+    `🎯 ${side === 'long' ? '多' : '空'}單部位工具：拖曳三條線調整，於下單面板送出`,
+    'success',
+  );
+}
+function clearPosTool() {
+  if (!state.posTool) return;
+  state.posTool = null;
+  updatePosToolButtons();
+  redrawDrawings();
+}
+function updatePosToolButtons() {
+  $$('.draw-toolbar button[data-postool]').forEach((b) =>
+    b.classList.toggle('active', !!state.posTool && state.posTool.side === b.dataset.postool),
+  );
+}
+function syncPosToolToForm() {
+  const pt = state.posTool;
+  if (!pt) return;
+  const set = (id, v) => {
+    const el = $(id);
+    el.value = v;
+    el.dataset.touched = '1';
+  };
+  set('order-entry', pt.entry);
+  set('order-sl', pt.sl);
+  set('order-tp', pt.tp);
+  updateOrderSummary();
+}
+// 表單 → 工具（使用者手動改欄位時）
+function syncFormToPosTool() {
+  const pt = state.posTool;
+  if (!pt) return;
+  const e = +$('order-entry').value,
+    s = +$('order-sl').value,
+    t = +$('order-tp').value;
+  if (e > 0) pt.entry = e;
+  if (s > 0) pt.sl = s;
+  if (t > 0) pt.tp = t;
+  redrawDrawings();
+}
+
+let posToolDrag = null; // 'entry' | 'sl' | 'tp'
+function onPosToolDragMove(e) {
+  if (!posToolDrag || !state.posTool) return;
+  const rect = $('chart').getBoundingClientRect();
+  let price = candleSeries.coordinateToPrice(e.clientY - rect.top);
+  if (price == null) return;
+  const pt = state.posTool;
+  const dp = priceDp(pt.entry || price);
+  const f = Math.pow(10, dp);
+  const eps = 1 / f;
+  price = Math.round(price * f) / f;
+  if (posToolDrag === 'entry') {
+    const delta = price - pt.entry; // 拖進場線 → 整組平移（TV 行為）
+    pt.entry = +(pt.entry + delta).toFixed(dp);
+    pt.sl = +(pt.sl + delta).toFixed(dp);
+    pt.tp = +(pt.tp + delta).toFixed(dp);
+  } else if (posToolDrag === 'tp') {
+    pt.tp = pt.side === 'long' ? Math.max(price, pt.entry + eps) : Math.min(price, pt.entry - eps);
+  } else {
+    pt.sl = pt.side === 'long' ? Math.min(price, pt.entry - eps) : Math.max(price, pt.entry + eps);
+  }
+  syncPosToolToForm();
+  redrawDrawings();
+}
+function onPosToolDragEnd() {
+  posToolDrag = null;
+  document.body.style.cursor = '';
+  document.removeEventListener('mousemove', onPosToolDragMove);
+  document.removeEventListener('mouseup', onPosToolDragEnd);
+}
+
+function drawShape(d, isPreview) {
+  const style = d.style || {
+    color: d.color || '#3b82f6',
+    lineWidth: 2,
+    lineStyle: 0,
+    label: '',
+  };
+  const color = style.color;
+  const selected = d.id && d.id === state.selectedDrawingId;
+  drawCtx.save();
+  drawCtx.globalAlpha = isPreview ? 0.6 : 1;
+  if (d.type === 'trend') drawTrend(d, style, selected);
+  else if (d.type === 'hline') drawHLine(d, style, selected);
+  else if (d.type === 'rect') drawRect(d, style, selected);
+  else if (d.type === 'fib') drawFib(d, style, selected);
+  else if (d.type === 'ray') drawRayLine(d, style, selected, false);
+  else if (d.type === 'extline') drawRayLine(d, style, selected, true);
+  else if (d.type === 'vline') drawVLine(d, style, selected);
+  else if (d.type === 'channel') drawChannel(d, style, selected);
+  else if (d.type === 'ellipse') drawEllipseShape(d, style, selected);
+  else if (d.type === 'arrow') drawArrowShape(d, style, selected);
+  else if (d.type === 'text') drawTextShape(d, style, selected);
+  else if (d.type === 'pricelabel') drawPriceLabel(d, style, selected);
+  else if (d.type === 'measure') drawMeasure(d, style, selected);
+  if (selected && !isPreview) drawSelectionAnchors(d);
+  drawCtx.restore();
+}
+
+// 線段沿方向延伸（射線/延伸線用）
+function extendSegment(x1, y1, x2, y2, extendStart, extendEnd) {
+  const dx = x2 - x1,
+    dy = y2 - y1;
+  const len = Math.hypot(dx, dy);
+  if (len < 0.0001) return [x1, y1, x2, y2];
+  const ux = dx / len,
+    uy = dy / len;
+  const E = 10000;
+  return [
+    extendStart ? x1 - ux * E : x1,
+    extendStart ? y1 - uy * E : y1,
+    extendEnd ? x2 + ux * E : x2,
+    extendEnd ? y2 + uy * E : y2,
+  ];
+}
+
+function drawRayLine(d, style, selected, bothWays) {
+  if (d.points.length < 2) return;
+  const x1 = timeToX(d.points[0].time),
+    y1 = priceToY(d.points[0].price);
+  const x2 = timeToX(d.points[1].time),
+    y2 = priceToY(d.points[1].price);
+  if (x1 == null || x2 == null || y1 == null || y2 == null) return;
+  const [ex1, ey1, ex2, ey2] = extendSegment(x1, y1, x2, y2, bothWays, true);
+  drawCtx.strokeStyle = style.color;
+  drawCtx.lineWidth = (style.lineWidth || 2) + (selected ? 1 : 0);
+  drawCtx.setLineDash(lineDashFor(style.lineStyle));
+  drawCtx.beginPath();
+  drawCtx.moveTo(ex1, ey1);
+  drawCtx.lineTo(ex2, ey2);
+  drawCtx.stroke();
+  drawCtx.setLineDash([]);
+  if (!selected) {
+    for (const [x, y] of [
+      [x1, y1],
+      [x2, y2],
+    ]) {
+      drawCtx.fillStyle = style.color;
+      drawCtx.beginPath();
+      drawCtx.arc(x, y, 3, 0, Math.PI * 2);
+      drawCtx.fill();
+    }
+  }
+  if (style.label) drawLabelChip(style.label, (x1 + x2) / 2, (y1 + y2) / 2 - 10, style.color);
+}
+
+function drawVLine(d, style, selected) {
+  const x = timeToX(d.points[0].time);
+  if (x == null) return;
+  const h = drawCanvas.parentElement.clientHeight;
+  drawCtx.strokeStyle = style.color;
+  drawCtx.lineWidth = (style.lineWidth || 1) + (selected ? 1 : 0);
+  drawCtx.setLineDash(lineDashFor(style.lineStyle == null ? 2 : style.lineStyle));
+  drawCtx.beginPath();
+  drawCtx.moveTo(x, 0);
+  drawCtx.lineTo(x, h);
+  drawCtx.stroke();
+  drawCtx.setLineDash([]);
+  if (!state.blind) {
+    drawLabelChip(fmtDateTime(d.points[0].time, state.timeframe), x, h - 12, style.color);
+  }
+  if (style.label) drawLabelChip(style.label, x, 12, style.color);
+}
+
+function drawChannel(d, style, selected) {
+  if (d.points.length < 2) return;
+  const x1 = timeToX(d.points[0].time),
+    y1 = priceToY(d.points[0].price);
+  const x2 = timeToX(d.points[1].time),
+    y2 = priceToY(d.points[1].price);
+  if (x1 == null || x2 == null || y1 == null || y2 == null) return;
+  const color = style.color;
+  drawCtx.strokeStyle = color;
+  drawCtx.lineWidth = (style.lineWidth || 1.5) + (selected ? 1 : 0);
+  drawCtx.setLineDash(lineDashFor(style.lineStyle));
+  drawCtx.beginPath();
+  drawCtx.moveTo(x1, y1);
+  drawCtx.lineTo(x2, y2);
+  drawCtx.stroke();
+  if (d.points.length >= 3) {
+    const x3 = timeToX(d.points[2].time),
+      y3 = priceToY(d.points[2].price);
+    if (x3 != null && y3 != null) {
+      // 垂直位移的平行線（TV 行為）
+      const dyOff = x2 === x1 ? y3 - y1 : y3 - (y1 + ((y2 - y1) * (x3 - x1)) / (x2 - x1));
+      drawCtx.beginPath();
+      drawCtx.moveTo(x1, y1 + dyOff);
+      drawCtx.lineTo(x2, y2 + dyOff);
+      drawCtx.stroke();
+      drawCtx.setLineDash([]);
+      drawCtx.fillStyle = color + '18';
+      drawCtx.beginPath();
+      drawCtx.moveTo(x1, y1);
+      drawCtx.lineTo(x2, y2);
+      drawCtx.lineTo(x2, y2 + dyOff);
+      drawCtx.lineTo(x1, y1 + dyOff);
+      drawCtx.closePath();
+      drawCtx.fill();
+      // 中線（虛線）
+      drawCtx.strokeStyle = color;
+      drawCtx.setLineDash([4, 4]);
+      drawCtx.globalAlpha *= 0.6;
+      drawCtx.beginPath();
+      drawCtx.moveTo(x1, y1 + dyOff / 2);
+      drawCtx.lineTo(x2, y2 + dyOff / 2);
+      drawCtx.stroke();
+      drawCtx.globalAlpha /= 0.6;
+    }
+  }
+  drawCtx.setLineDash([]);
+  if (style.label) drawLabelChip(style.label, (x1 + x2) / 2, (y1 + y2) / 2 - 10, color);
+}
+
+function drawEllipseShape(d, style, selected) {
+  if (d.points.length < 2) return;
+  const x1 = timeToX(d.points[0].time),
+    y1 = priceToY(d.points[0].price);
+  const x2 = timeToX(d.points[1].time),
+    y2 = priceToY(d.points[1].price);
+  if (x1 == null || x2 == null || y1 == null || y2 == null) return;
+  const cx = (x1 + x2) / 2,
+    cy = (y1 + y2) / 2;
+  const rx = Math.max(2, Math.abs(x2 - x1) / 2),
+    ry = Math.max(2, Math.abs(y2 - y1) / 2);
+  drawCtx.fillStyle = style.color + '22';
+  drawCtx.strokeStyle = style.color;
+  drawCtx.lineWidth = (style.lineWidth || 1.5) + (selected ? 1 : 0);
+  drawCtx.setLineDash(lineDashFor(style.lineStyle));
+  drawCtx.beginPath();
+  drawCtx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+  drawCtx.fill();
+  drawCtx.stroke();
+  drawCtx.setLineDash([]);
+  if (style.label) drawLabelChip(style.label, cx, cy - ry - 10, style.color);
+}
+
+function drawArrowShape(d, style, selected) {
+  if (d.points.length < 2) return;
+  const x1 = timeToX(d.points[0].time),
+    y1 = priceToY(d.points[0].price);
+  const x2 = timeToX(d.points[1].time),
+    y2 = priceToY(d.points[1].price);
+  if (x1 == null || x2 == null || y1 == null || y2 == null) return;
+  drawCtx.strokeStyle = style.color;
+  drawCtx.fillStyle = style.color;
+  drawCtx.lineWidth = (style.lineWidth || 2) + (selected ? 1 : 0);
+  drawCtx.setLineDash([]);
+  drawCtx.beginPath();
+  drawCtx.moveTo(x1, y1);
+  drawCtx.lineTo(x2, y2);
+  drawCtx.stroke();
+  // 箭頭頭部
+  const ang = Math.atan2(y2 - y1, x2 - x1);
+  const hl = 10 + (style.lineWidth || 2) * 2;
+  drawCtx.beginPath();
+  drawCtx.moveTo(x2, y2);
+  drawCtx.lineTo(x2 - hl * Math.cos(ang - 0.42), y2 - hl * Math.sin(ang - 0.42));
+  drawCtx.lineTo(x2 - hl * Math.cos(ang + 0.42), y2 - hl * Math.sin(ang + 0.42));
+  drawCtx.closePath();
+  drawCtx.fill();
+  if (style.label) drawLabelChip(style.label, (x1 + x2) / 2, (y1 + y2) / 2 - 10, style.color);
+}
+
+function drawTextShape(d, style, selected) {
+  const x = timeToX(d.points[0].time),
+    y = priceToY(d.points[0].price);
+  if (x == null || y == null) return;
+  const text = d.text || style.label || '文字';
+  drawCtx.font = '600 13px -apple-system, "PingFang TC", sans-serif';
+  drawCtx.fillStyle = style.color;
+  drawCtx.textBaseline = 'middle';
+  drawCtx.fillText(text, x, y);
+  if (selected) {
+    const tw = drawCtx.measureText(text).width;
+    drawCtx.strokeStyle = style.color;
+    drawCtx.lineWidth = 1;
+    drawCtx.setLineDash([3, 3]);
+    drawCtx.strokeRect(x - 4, y - 11, tw + 8, 22);
+    drawCtx.setLineDash([]);
+  }
+}
+
+function drawPriceLabel(d, style, selected) {
+  const x = timeToX(d.points[0].time),
+    y = priceToY(d.points[0].price);
+  if (x == null || y == null) return;
+  // 指向點的小三角 + 價格 chip
+  drawCtx.fillStyle = style.color;
+  drawCtx.beginPath();
+  drawCtx.moveTo(x, y);
+  drawCtx.lineTo(x + 8, y - 5);
+  drawCtx.lineTo(x + 8, y + 5);
+  drawCtx.closePath();
+  drawCtx.fill();
+  drawLabelChip(
+    fmtPrice(d.points[0].price) + (style.label ? ' ' + style.label : ''),
+    x + 8,
+    y,
+    style.color,
+    'left',
+  );
+  if (selected) {
+    drawCtx.strokeStyle = style.color;
+    drawCtx.lineWidth = 1;
+    drawCtx.beginPath();
+    drawCtx.arc(x, y, 6, 0, Math.PI * 2);
+    drawCtx.stroke();
+  }
+}
+
+function drawMeasure(d, style, selected) {
+  if (d.points.length < 2) return;
+  const p1 = d.points[0],
+    p2 = d.points[1];
+  const x1 = timeToX(p1.time),
+    y1 = priceToY(p1.price);
+  const x2 = timeToX(p2.time),
+    y2 = priceToY(p2.price);
+  if (x1 == null || x2 == null || y1 == null || y2 == null) return;
+  const dPrice = p2.price - p1.price;
+  const pct = p1.price ? (dPrice / p1.price) * 100 : 0;
+  let bars = 0;
+  for (const c of state.candles) {
+    if (c.time > Math.min(p1.time, p2.time) && c.time <= Math.max(p1.time, p2.time)) bars++;
+  }
+  const upMove = dPrice >= 0;
+  const boxColor = upMove ? 'rgba(8,153,129,0.14)' : 'rgba(242,54,69,0.14)';
+  const lineColor = upMove ? '#089981' : '#f23645';
+  const x = Math.min(x1, x2),
+    y = Math.min(y1, y2);
+  const w = Math.abs(x2 - x1),
+    h = Math.abs(y2 - y1);
+  drawCtx.fillStyle = boxColor;
+  drawCtx.strokeStyle = lineColor;
+  drawCtx.lineWidth = 1 + (selected ? 1 : 0);
+  drawCtx.fillRect(x, y, w, h);
+  drawCtx.strokeRect(x, y, w, h);
+  // 中央資訊卡
+  const lines = [
+    `${dPrice >= 0 ? '+' : ''}${fmtPrice(dPrice)} (${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%)`,
+    `${bars} 根 K 棒`,
+  ];
+  drawCtx.font = '11px -apple-system, sans-serif';
+  const cw = Math.max(...lines.map((t) => drawCtx.measureText(t).width)) + 16;
+  const chH = 34;
+  const bx = x + w / 2 - cw / 2,
+    by = y + h / 2 - chH / 2;
+  drawCtx.fillStyle = lineColor;
+  drawCtx.fillRect(bx, by, cw, chH);
+  drawCtx.fillStyle = '#fff';
+  drawCtx.textBaseline = 'middle';
+  lines.forEach((t, i) => {
+    const tw2 = drawCtx.measureText(t).width;
+    drawCtx.fillText(t, bx + (cw - tw2) / 2, by + 10 + i * 15);
+  });
+}
+
+function drawLabelChip(text, x, y, color, align) {
+  if (!text) return;
+  drawCtx.save();
+  drawCtx.font = '11px -apple-system, sans-serif';
+  const padX = 5,
+    padY = 2;
+  const tw = drawCtx.measureText(text).width;
+  const w = tw + padX * 2;
+  const h = 16;
+  let bx;
+  if (align === 'right') bx = x - w;
+  else if (align === 'left') bx = x;
+  else bx = x - w / 2;
+  drawCtx.fillStyle = color;
+  drawCtx.fillRect(bx, y - h / 2, w, h);
+  drawCtx.fillStyle = '#131722';
+  drawCtx.textBaseline = 'middle';
+  drawCtx.fillText(text, bx + padX, y);
+  drawCtx.restore();
+}
+
+function drawSelectionAnchors(d) {
+  for (const point of d.points) {
+    const x = timeToX(point.time);
+    const y = priceToY(point.price);
+    if (x == null || y == null) continue;
+    drawCtx.save();
+    drawCtx.fillStyle = '#fff';
+    drawCtx.strokeStyle = '#131722';
+    drawCtx.lineWidth = 2;
+    drawCtx.beginPath();
+    drawCtx.arc(x, y, 6, 0, Math.PI * 2);
+    drawCtx.fill();
+    drawCtx.stroke();
+    drawCtx.restore();
+  }
+}
+
+// ---- Hit testing ----
+const HIT_PX_LINE = 5;
+const HIT_PX_ANCHOR = 8;
+
+function distanceToSegment(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1,
+    dy = y2 - y1;
+  const len2 = dx * dx + dy * dy;
+  if (len2 === 0) return Math.hypot(px - x1, py - y1);
+  let t = ((px - x1) * dx + (py - y1) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+}
+
+function hitTestDrawing(d, px, py) {
+  // --- 單點類型 ---
+  if (d.type === 'hline') {
+    const y = priceToY(d.points[0].price);
+    if (y == null) return null;
+    return Math.abs(py - y) <= HIT_PX_LINE ? { mode: 'move' } : null;
+  }
+  if (d.type === 'vline') {
+    const x = timeToX(d.points[0].time);
+    if (x == null) return null;
+    return Math.abs(px - x) <= HIT_PX_LINE ? { mode: 'move' } : null;
+  }
+  if (d.type === 'text') {
+    const x = timeToX(d.points[0].time),
+      y = priceToY(d.points[0].price);
+    if (x == null || y == null) return null;
+    drawCtx.font = '600 13px -apple-system, "PingFang TC", sans-serif';
+    const tw = drawCtx.measureText(d.text || '文字').width;
+    return px >= x - 6 && px <= x + tw + 6 && py >= y - 13 && py <= y + 13
+      ? { mode: 'move' }
+      : null;
+  }
+  if (d.type === 'pricelabel') {
+    const x = timeToX(d.points[0].time),
+      y = priceToY(d.points[0].price);
+    if (x == null || y == null) return null;
+    return px >= x - 8 && px <= x + 90 && py >= y - 12 && py <= y + 12 ? { mode: 'move' } : null;
+  }
+
+  // --- 多點類型（先測 anchor）---
+  const pts = d.points.map((p) => [timeToX(p.time), priceToY(p.price)]);
+  if (pts.some(([x, y]) => x == null || y == null)) return null;
+  for (let i = 0; i < pts.length; i++) {
+    if (Math.hypot(px - pts[i][0], py - pts[i][1]) <= HIT_PX_ANCHOR)
+      return { mode: 'anchor', idx: i };
+  }
+  const [x1, y1] = pts[0];
+  const [x2, y2] = pts[1] || pts[0];
+
+  if (d.type === 'trend' || d.type === 'fib' || d.type === 'arrow' || d.type === 'measure') {
+    if (d.type === 'measure') {
+      const xL = Math.min(x1, x2),
+        xR = Math.max(x1, x2);
+      const yT = Math.min(y1, y2),
+        yB = Math.max(y1, y2);
+      if (px >= xL && px <= xR && py >= yT && py <= yB) return { mode: 'move' };
+    }
+    if (distanceToSegment(px, py, x1, y1, x2, y2) <= HIT_PX_LINE) return { mode: 'move' };
+    return null;
+  }
+  if (d.type === 'ray' || d.type === 'extline') {
+    const [ex1, ey1, ex2, ey2] = extendSegment(x1, y1, x2, y2, d.type === 'extline', true);
+    if (distanceToSegment(px, py, ex1, ey1, ex2, ey2) <= HIT_PX_LINE) return { mode: 'move' };
+    return null;
+  }
+  if (d.type === 'channel') {
+    if (distanceToSegment(px, py, x1, y1, x2, y2) <= HIT_PX_LINE) return { mode: 'move' };
+    if (pts[2]) {
+      const [x3, y3] = pts[2];
+      const dyOff = x2 === x1 ? y3 - y1 : y3 - (y1 + ((y2 - y1) * (x3 - x1)) / (x2 - x1));
+      if (distanceToSegment(px, py, x1, y1 + dyOff, x2, y2 + dyOff) <= HIT_PX_LINE)
+        return { mode: 'move' };
+      // 通道內部
+      const yOnBase = x2 === x1 ? y1 : y1 + ((y2 - y1) * (px - x1)) / (x2 - x1);
+      const inX = px >= Math.min(x1, x2) && px <= Math.max(x1, x2);
+      if (
+        inX &&
+        py >= Math.min(yOnBase, yOnBase + dyOff) &&
+        py <= Math.max(yOnBase, yOnBase + dyOff)
+      )
+        return { mode: 'move' };
+    }
+    return null;
+  }
+  if (d.type === 'ellipse') {
+    const cx = (x1 + x2) / 2,
+      cy = (y1 + y2) / 2;
+    const rx = Math.max(2, Math.abs(x2 - x1) / 2),
+      ry = Math.max(2, Math.abs(y2 - y1) / 2);
+    const v = ((px - cx) / rx) ** 2 + ((py - cy) / ry) ** 2;
+    return v <= 1.15 ? { mode: 'move' } : null;
+  }
+  if (d.type === 'rect') {
+    const xL = Math.min(x1, x2),
+      xR = Math.max(x1, x2);
+    const yT = Math.min(y1, y2),
+      yB = Math.max(y1, y2);
+    const onEdge =
+      (Math.abs(px - xL) <= HIT_PX_LINE && py >= yT - 2 && py <= yB + 2) ||
+      (Math.abs(px - xR) <= HIT_PX_LINE && py >= yT - 2 && py <= yB + 2) ||
+      (Math.abs(py - yT) <= HIT_PX_LINE && px >= xL - 2 && px <= xR + 2) ||
+      (Math.abs(py - yB) <= HIT_PX_LINE && px >= xL - 2 && px <= xR + 2);
+    if (onEdge) return { mode: 'move' };
+    if (px >= xL && px <= xR && py >= yT && py <= yB) return { mode: 'move' };
+    return null;
+  }
+  return null;
+}
+
+function hitTestAllDrawings(px, py) {
+  if (state.drawingsHidden) return null;
+  const arr = getCurrentDrawings();
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const d = arr[i];
+    const hit = hitTestDrawing(d, px, py);
+    if (hit) return { drawing: d, ...hit };
+  }
+  return null;
+}
+
+function drawTrend(d, style, selected) {
+  const x1 = timeToX(d.points[0].time);
+  const y1 = priceToY(d.points[0].price);
+  const x2 = timeToX(d.points[1].time);
+  const y2 = priceToY(d.points[1].price);
+  if (x1 == null || x2 == null || y1 == null || y2 == null) return;
+  const color = style.color;
+  drawCtx.strokeStyle = color;
+  drawCtx.lineWidth = (style.lineWidth || 2) + (selected ? 1 : 0);
+  drawCtx.setLineDash(lineDashFor(style.lineStyle));
+  drawCtx.beginPath();
+  drawCtx.moveTo(x1, y1);
+  drawCtx.lineTo(x2, y2);
+  drawCtx.stroke();
+  drawCtx.setLineDash([]);
+  if (!selected) {
+    for (const [x, y] of [
+      [x1, y1],
+      [x2, y2],
+    ]) {
+      drawCtx.fillStyle = color;
+      drawCtx.beginPath();
+      drawCtx.arc(x, y, 3, 0, Math.PI * 2);
+      drawCtx.fill();
+    }
+  }
+  // Label at midpoint
+  if (style.label) {
+    const mx = (x1 + x2) / 2,
+      my = (y1 + y2) / 2;
+    drawLabelChip(style.label, mx, my - 10, color);
+  }
+}
+
+function drawHLine(d, style, selected) {
+  const y = priceToY(d.points[0].price);
+  if (y == null) return;
+  const w = drawCanvas.parentElement.clientWidth;
+  const color = style.color;
+  drawCtx.strokeStyle = color;
+  drawCtx.lineWidth = (style.lineWidth || 1) + (selected ? 1 : 0);
+  drawCtx.setLineDash(lineDashFor(style.lineStyle == null ? 2 : style.lineStyle));
+  drawCtx.beginPath();
+  drawCtx.moveTo(0, y);
+  drawCtx.lineTo(w, y);
+  drawCtx.stroke();
+  drawCtx.setLineDash([]);
+  // Price label (always shown at left)
+  const priceText = fmtPrice(d.points[0].price);
+  drawCtx.font = '11px -apple-system, sans-serif';
+  const tw = drawCtx.measureText(priceText).width;
+  drawCtx.fillStyle = color;
+  drawCtx.fillRect(8, y - 14, tw + 8, 16);
+  drawCtx.fillStyle = '#131722';
+  drawCtx.fillText(priceText, 12, y - 2);
+  // Custom label (on the right) if provided
+  if (style.label) {
+    drawLabelChip(style.label, w - 10, y - 10, color, 'right');
+  }
+}
+
+function drawRect(d, style, selected) {
+  const x1 = timeToX(d.points[0].time);
+  const y1 = priceToY(d.points[0].price);
+  const x2 = timeToX(d.points[1].time);
+  const y2 = priceToY(d.points[1].price);
+  if (x1 == null || x2 == null || y1 == null || y2 == null) return;
+  const color = style.color;
+  const x = Math.min(x1, x2),
+    y = Math.min(y1, y2);
+  const w = Math.abs(x2 - x1),
+    h = Math.abs(y2 - y1);
+  drawCtx.fillStyle = color + '22';
+  drawCtx.strokeStyle = color;
+  drawCtx.lineWidth = (style.lineWidth || 1.5) + (selected ? 1 : 0);
+  drawCtx.setLineDash(lineDashFor(style.lineStyle));
+  drawCtx.fillRect(x, y, w, h);
+  drawCtx.strokeRect(x, y, w, h);
+  drawCtx.setLineDash([]);
+  if (style.label) {
+    drawLabelChip(style.label, x + 6, y + 14, color, 'left');
+  }
+}
+
+function drawFib(d, style, selected) {
+  const x1 = timeToX(d.points[0].time);
+  const y1 = priceToY(d.points[0].price);
+  const x2 = timeToX(d.points[1].time);
+  const y2 = priceToY(d.points[1].price);
+  if (x1 == null || x2 == null || y1 == null || y2 == null) return;
+  const color = style.color;
+  const p1 = d.points[0].price;
+  const p2 = d.points[1].price;
+  const cw = drawCanvas.parentElement.clientWidth;
+  const levels = [
+    { lv: 0, c: '#94a3b8' },
+    { lv: 0.236, c: '#fbbf24' },
+    { lv: 0.382, c: '#f59e0b' },
+    { lv: 0.5, c: '#089981' },
+    { lv: 0.618, c: '#3b82f6' },
+    { lv: 0.786, c: '#a855f7' },
+    { lv: 1, c: '#94a3b8' },
+  ];
+  drawCtx.lineWidth = 1;
+  drawCtx.font = '10px -apple-system, sans-serif';
+  const xL = Math.min(x1, x2);
+  const xR = Math.max(x1, x2);
+  for (const { lv, c } of levels) {
+    const price = p1 + (p2 - p1) * lv;
+    const y = priceToY(price);
+    if (y == null) continue;
+    drawCtx.strokeStyle = c;
+    drawCtx.beginPath();
+    drawCtx.moveTo(xL, y);
+    drawCtx.lineTo(cw, y); // extend to right edge
+    drawCtx.stroke();
+    drawCtx.fillStyle = c;
+    drawCtx.fillText(`${(lv * 100).toFixed(1)}%  ${fmtPrice(price)}`, xR + 6, y - 2);
+  }
+  // Outer trend line connecting two anchors
+  drawCtx.strokeStyle = color;
+  drawCtx.lineWidth = (style.lineWidth || 1) + (selected ? 1 : 0);
+  drawCtx.setLineDash([4, 3]);
+  drawCtx.beginPath();
+  drawCtx.moveTo(x1, y1);
+  drawCtx.lineTo(x2, y2);
+  drawCtx.stroke();
+  drawCtx.setLineDash([]);
+  if (!selected) {
+    for (const [x, y] of [
+      [x1, y1],
+      [x2, y2],
+    ]) {
+      drawCtx.fillStyle = color;
+      drawCtx.beginPath();
+      drawCtx.arc(x, y, 3, 0, Math.PI * 2);
+      drawCtx.fill();
+    }
+  }
+  if (style.label) {
+    drawLabelChip(style.label, (x1 + x2) / 2, Math.min(y1, y2) - 12, color);
+  }
+}
+
+// ---- Tool actions ----
+function setTool(tool) {
+  state.tool = tool;
+  resetPendingPoints();
+  if (tool) state.selectedDrawingId = null;
+  $$('.draw-toolbar button[data-tool]').forEach((b) =>
+    b.classList.toggle('active', (b.dataset.tool || '') === (tool || '')),
+  );
+  if (tool) drawCanvas.classList.add('active');
+  else drawCanvas.classList.remove('active');
+  redrawDrawings();
+  if (typeof refreshTemplatesPanel === 'function') refreshTemplatesPanel();
+}
+
+// 磁鐵：把點擊價吸附到該 K 棒最近的 OHLC（8px 內）
+function snapPrice(time, price) {
+  if (!state.magnet) return price;
+  const c = state.candles.find((x) => x.time === time);
+  if (!c) return price;
+  const py = priceToY(price);
+  if (py == null) return price;
+  let best = price,
+    bestDist = 8;
+  for (const cand of [c.open, c.high, c.low, c.close]) {
+    const cy = priceToY(cand);
+    if (cy == null) continue;
+    const dist = Math.abs(cy - py);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = cand;
+    }
+  }
+  return best;
+}
+
+function resetPendingPoints() {
+  state.pendingPoints = [];
+  state.firstPoint = null;
+  state.hoverPoint = null;
+}
+
+function handleToolClick(time, price) {
+  const t = state.tool;
+  price = snapPrice(time, price);
+  const need = TOOL_POINTS[t] || 2;
+  state.pendingPoints.push({ time, price });
+  state.firstPoint = state.pendingPoints[0];
+  if (state.pendingPoints.length < need) {
+    showToast(`再點 ${need - state.pendingPoints.length} 點完成`, 'success');
+    redrawDrawings();
+    return;
+  }
+  const d = { type: t, points: [...state.pendingPoints], style: getActiveTplStyle(t) };
+  if (t === 'text') {
+    const txt = prompt('輸入文字：');
+    if (!txt || !txt.trim()) {
+      resetPendingPoints();
+      redrawDrawings();
+      return;
+    }
+    d.text = txt.trim();
+  }
+  addDrawing(d);
+  resetPendingPoints();
+}
+
+function addDrawing(d) {
+  d.id = uid();
+  d.createdAt = Date.now();
+  getCurrentDrawings().push(d);
+  saveStorage();
+  redrawDrawings();
+}
+
+function undoLastDrawing() {
+  const arr = getCurrentDrawings();
+  if (!arr.length) {
+    showToast('沒有可復原的畫線', 'error');
+    return;
+  }
+  arr.pop();
+  saveStorage();
+  redrawDrawings();
+  showToast('已復原', 'success');
+}
+
+function clearAllDrawings() {
+  const arr = getCurrentDrawings();
+  if (!arr.length) return;
+  // 用 symLabel（盲測中顯示「❓ 盲測標的」）＋清 getCurrentDrawings 的同一把 key，
+  // 否則盲測時會在確認視窗印出答案，而且清掉的是該標的平時的畫線
+  if (
+    !confirm(`清除所有畫線（${symLabel(state.symbol)} ${state.timeframe} 共 ${arr.length} 筆）？`)
+  )
+    return;
+  state.drawings[drawingsKey()] = [];
+  saveStorage();
+  redrawDrawings();
+  showToast('已清除', 'success');
+}
+
+function toggleTimeAxis() {
+  if (state.blind) {
+    showToast('盲測中時間軸保持隱藏', 'error');
+    return;
+  }
+  state.timeAxisVisible = !state.timeAxisVisible;
+  chart.timeScale().applyOptions({ visible: state.timeAxisVisible });
+  $('btn-toggle-time').classList.toggle('active', !state.timeAxisVisible);
+  setTimeout(redrawDrawings, 50);
+}
+
+function redrawPositionLines() {
+  if (!candleSeries) return;
+  // Remove old（切換圖表類型後舊線已隨舊 series 銷毀，容錯處理）
+  posLines.forEach((l) => {
+    try {
+      candleSeries.removePriceLine(l);
+    } catch {}
+  });
+  posLines = [];
+  posLineMap.clear();
+  // Open positions for current symbol/tf (盲測 scope 過濾；含未成交掛單)
+  const open = state.positions.filter(
+    (p) =>
+      (p.status === 'open' || p.status === 'pending') &&
+      p.symbol === state.symbol &&
+      p.timeframe === state.timeframe &&
+      inScope(p),
+  );
+  open.forEach((p) => {
+    const pending = p.status === 'pending';
+    const color = p.side === 'long' ? '#089981' : '#f23645';
+    const labelSide = p.side === 'long' ? 'L' : 'S';
+    const entryLine = candleSeries.createPriceLine({
+      price: p.entryPrice,
+      color: pending ? '#b2b5be' : color,
+      lineWidth: 1,
+      lineStyle: pending ? 2 : 0,
+      title: pending
+        ? `⏳ ${labelSide} 掛單 ${fmtPrice(p.entryPrice)}`
+        : `${labelSide} 進場 ${fmtPrice(p.entryPrice)}`,
+    });
+    // 停損/停利選填：只畫有設定的線
+    let slLine = null,
+      tpLine = null;
+    if (p.stopLoss != null) {
+      slLine = candleSeries.createPriceLine({
+        price: p.stopLoss,
+        color: '#f77c80',
+        lineWidth: 2,
+        lineStyle: 2,
+        title: slLineTitle(p, p.stopLoss, false),
+      });
+    }
+    if (p.takeProfit != null) {
+      tpLine = candleSeries.createPriceLine({
+        price: p.takeProfit,
+        color: '#26a69a',
+        lineWidth: 2,
+        lineStyle: 2,
+        title: tpLineTitle(p, p.takeProfit, false),
+      });
+    }
+    posLines.push(entryLine);
+    if (slLine) posLines.push(slLine);
+    if (tpLine) posLines.push(tpLine);
+    posLineMap.set(p.id, { entry: entryLine, sl: slLine, tp: tpLine });
+  });
+}
+
+// ============================================================
+// Drag SL/TP lines
+// ============================================================
+const DRAG_HIT_PX = 6;
+let dragState = null; // { posId, type:'sl'|'tp', priceLine, originalPrice }
+
+function findDraggableLineAtY(y) {
+  if (state.tool) return null; // disabled in drawing mode
+  for (const p of state.positions) {
+    if (p.status !== 'open' && p.status !== 'pending') continue;
+    if (p.symbol !== state.symbol || p.timeframe !== state.timeframe || !inScope(p)) continue;
+    // 掛單的進場線可拖曳：調整掛單價，SL/TP 整組平移（已成交的成本線固定不可拖）
+    if (p.status === 'pending') {
+      const eY = candleSeries.priceToCoordinate(p.entryPrice);
+      if (eY != null && Math.abs(y - eY) <= DRAG_HIT_PX) {
+        return { pos: p, type: 'pentry' };
+      }
+    }
+    if (p.stopLoss != null) {
+      const slY = candleSeries.priceToCoordinate(p.stopLoss);
+      if (slY != null && Math.abs(y - slY) <= DRAG_HIT_PX) {
+        return { pos: p, type: 'sl' };
+      }
+    }
+    if (p.takeProfit != null) {
+      const tpY = candleSeries.priceToCoordinate(p.takeProfit);
+      if (tpY != null && Math.abs(y - tpY) <= DRAG_HIT_PX) {
+        return { pos: p, type: 'tp' };
+      }
+    }
+    // 已成交持倉的成本線：抓住往上/往下拖即可設定停利/停損（放開的位置決定是哪一條）
+    if (p.status === 'open') {
+      const eY = candleSeries.priceToCoordinate(p.entryPrice);
+      if (eY != null && Math.abs(y - eY) <= DRAG_HIT_PX) {
+        return { pos: p, type: 'entryset' };
+      }
+    }
+  }
+  return null;
+}
+
+function onDragMove(e) {
+  if (!dragState) return;
+  const chartEl = $('chart');
+  const rect = chartEl.getBoundingClientRect();
+  const y = e.clientY - rect.top;
+  let newPrice = candleSeries.coordinateToPrice(y);
+  if (newPrice == null) return;
+  const p = state.positions.find((x) => x.id === dragState.posId);
+  // 標的守衛：拖曳途中若切換了標的/週期，這裡的價格屬於「新標的」，
+  // 寫進舊部位會產生天文數字的假損益——直接中止本次拖曳
+  if (!p || p.symbol !== state.symbol || p.timeframe !== state.timeframe) {
+    cancelLineDrag();
+    return;
+  }
+  // Clamp: SL/TP must stay on the correct side of the CURRENT price
+  // (otherwise the order would already be triggered).
+  // SL above current = already stopped out (long); TP below current = already filled (long).
+  // 掛單（pending）以掛單價為基準，而非現價
+  const curBar = state.candles[state.cursorIndex];
+  const refPrice = p.status === 'pending' ? p.entryPrice : curBar ? curBar.close : p.entryPrice;
+  const dp = priceDp(refPrice);
+  const eps = Math.pow(10, -dp);
+  const f = Math.pow(10, dp);
+  // 拖成本線設定停損/停利：游標在獲利側→停利、虧損側→停損（虛線即時預覽價位與金額）
+  if (dragState.type === 'entryset') {
+    newPrice = Math.round(newPrice * f) / f;
+    const profitSide = p.side === 'long' ? newPrice > p.entryPrice : newPrice < p.entryPrice;
+    dragState.setTarget = profitSide ? 'tp' : 'sl';
+    dragState.setPrice = newPrice;
+    if (dragState.tempLine) {
+      dragState.tempLine.applyOptions({
+        price: newPrice,
+        color: profitSide ? '#26a69a' : '#f77c80',
+        title: `${profitSide ? '🎯 設停利' : '🔻 設停損'} ${fmtPrice(newPrice)}  ${fmtMoneySigned(pnlAtPrice(p, newPrice))}`,
+      });
+    }
+    return;
+  }
+  // 拖掛單進場線：整組平移（SL/TP 跟著移動，距離不變）
+  if (dragState.type === 'pentry') {
+    newPrice = Math.round(newPrice * f) / f;
+    const delta = newPrice - p.entryPrice;
+    if (!delta) return;
+    p.entryPrice = +(p.entryPrice + delta).toFixed(dp);
+    if (p.stopLoss != null) p.stopLoss = +(p.stopLoss + delta).toFixed(dp);
+    if (p.takeProfit != null) p.takeProfit = +(p.takeProfit + delta).toFixed(dp);
+    const lines = posLineMap.get(p.id);
+    if (lines) {
+      lines.entry.applyOptions({
+        price: p.entryPrice,
+        title: `⏳ ${p.side === 'long' ? 'L' : 'S'} 掛單 ${fmtPrice(p.entryPrice)} …`,
+      });
+      if (lines.sl)
+        lines.sl.applyOptions({ price: p.stopLoss, title: slLineTitle(p, p.stopLoss, true) });
+      if (lines.tp)
+        lines.tp.applyOptions({
+          price: p.takeProfit,
+          title: tpLineTitle(p, p.takeProfit, true),
+        });
+    }
+    renderPositions();
+    return;
+  }
+  if (p.side === 'long') {
+    if (dragState.type === 'sl') newPrice = Math.min(newPrice, refPrice - eps);
+    else newPrice = Math.max(newPrice, refPrice + eps);
+  } else {
+    if (dragState.type === 'sl') newPrice = Math.max(newPrice, refPrice + eps);
+    else newPrice = Math.min(newPrice, refPrice - eps);
+  }
+  newPrice = Math.round(newPrice * f) / f;
+  if (dragState.type === 'sl') {
+    p.stopLoss = newPrice;
+    dragState.priceLine.applyOptions({
+      price: newPrice,
+      title: slLineTitle(p, newPrice, true),
+    });
+  } else {
+    p.takeProfit = newPrice;
+    dragState.priceLine.applyOptions({
+      price: newPrice,
+      title: tpLineTitle(p, newPrice, true),
+    });
+  }
+  renderPositions();
+  updateHotStats();
+}
+
+// 手勢被系統中斷（touchcancel）：還原到拖曳前的狀態，不套用任何變更
+function cancelLineDrag() {
+  if (!dragState) return;
+  const p = state.positions.find((x) => x.id === dragState.posId);
+  if (dragState.tempLine) {
+    try {
+      candleSeries.removePriceLine(dragState.tempLine);
+    } catch {}
+  }
+  if (p) {
+    if (dragState.type === 'pentry') p.entryPrice = dragState.originalPrice;
+    p.stopLoss = dragState.origSl ?? p.stopLoss;
+    p.takeProfit = dragState.origTp ?? p.takeProfit;
+    redrawPositionLines();
+    renderPositions();
+    updateHotStats();
+  }
+  document.body.style.cursor = '';
+  document.removeEventListener('mousemove', onDragMove);
+  document.removeEventListener('mouseup', onDragEnd);
+  dragState = null;
+}
+
+function onDragEnd() {
+  if (!dragState) return;
+  const p = state.positions.find((x) => x.id === dragState.posId);
+  // 同 onDragMove 的標的守衛：切換標的後放開滑鼠不得套用
+  if (p && (p.symbol !== state.symbol || p.timeframe !== state.timeframe)) {
+    cancelLineDrag();
+    return;
+  }
+  // 成本線拖曳設定：移除預覽虛線，把放開的價位寫進停損或停利
+  if (dragState.type === 'entryset') {
+    if (dragState.tempLine) {
+      try {
+        candleSeries.removePriceLine(dragState.tempLine);
+      } catch {}
+    }
+    if (p && dragState.setTarget && dragState.setPrice != null) {
+      const curBar = state.candles[state.cursorIndex];
+      const ref = curBar ? curBar.close : p.entryPrice;
+      const dp = priceDp(ref);
+      const eps = Math.pow(10, -dp);
+      let price = dragState.setPrice;
+      // 與拖曳 SL/TP 相同的保護：必須在現價的正確側，否則掛上去當根就觸發
+      if (p.side === 'long')
+        price =
+          dragState.setTarget === 'sl' ? Math.min(price, ref - eps) : Math.max(price, ref + eps);
+      else
+        price =
+          dragState.setTarget === 'sl' ? Math.max(price, ref + eps) : Math.min(price, ref - eps);
+      price = +price.toFixed(dp);
+      if (dragState.setTarget === 'sl') p.stopLoss = price;
+      else p.takeProfit = price;
+      saveStorage();
+      redrawPositionLines();
+      renderPositions();
+      updateHotStats();
+      showToast(
+        `已設定${dragState.setTarget === 'sl' ? '停損' : '停利'} → ${fmtPrice(price)}（預期 ${fmtMoneySigned(pnlAtPrice(p, price))}）`,
+        'success',
+      );
+    }
+    document.body.style.cursor = '';
+    document.removeEventListener('mousemove', onDragMove);
+    document.removeEventListener('mouseup', onDragEnd);
+    dragState = null;
+    return;
+  }
+  if (p) {
+    saveStorage();
+    // Reset title (remove dragging indicator)
+    const lines = posLineMap.get(p.id);
+    if (lines) {
+      if (dragState.type === 'pentry')
+        lines.entry.applyOptions({
+          title: `⏳ ${p.side === 'long' ? 'L' : 'S'} 掛單 ${fmtPrice(p.entryPrice)}`,
+        });
+      if (lines.sl && p.stopLoss != null)
+        lines.sl.applyOptions({ title: slLineTitle(p, p.stopLoss, false) });
+      if (lines.tp && p.takeProfit != null)
+        lines.tp.applyOptions({ title: tpLineTitle(p, p.takeProfit, false) });
+    }
+    if (dragState.type === 'pentry') {
+      showToast(
+        `已調整掛單價 → ${fmtPrice(p.entryPrice)}${p.stopLoss != null || p.takeProfit != null ? '（停損/停利同步平移）' : ''}`,
+        'success',
+      );
+    } else {
+      const _price = dragState.type === 'sl' ? p.stopLoss : p.takeProfit;
+      showToast(
+        `已更新${dragState.type === 'sl' ? '停損' : '停利'} → ${fmtPrice(_price)}（預期 ${fmtMoneySigned(pnlAtPrice(p, _price))}）`,
+        'success',
+      );
+    }
+  }
+  document.body.style.cursor = '';
+  document.removeEventListener('mousemove', onDragMove);
+  document.removeEventListener('mouseup', onDragEnd);
+  dragState = null;
+}
+
+function initDragSLTP() {
+  const chartEl = $('chart');
+  // Hover cursor feedback (only when not drawing and not already dragging)
+  chart.subscribeCrosshairMove((param) => {
+    if (dragState || state.drawingDrag || state.tool || posToolDrag) return;
+    if (!param.point) {
+      chartEl.style.cursor = '';
+      return;
+    }
+    // Priority: 部位工具線 > SL/TP > 畫線
+    if (state.posTool && posToolHitAtY(param.point.y)) {
+      chartEl.style.cursor = 'ns-resize';
+      return;
+    }
+    const slTpHit = findDraggableLineAtY(param.point.y);
+    if (slTpHit) {
+      chartEl.style.cursor = 'ns-resize';
+      return;
+    }
+    // Then drawing hit
+    const dHit = hitTestAllDrawings(param.point.x, param.point.y);
+    if (dHit) {
+      chartEl.style.cursor = dHit.mode === 'anchor' ? 'crosshair' : 'move';
+      return;
+    }
+    chartEl.style.cursor = '';
+  });
+
+  // Capture mousedown BEFORE chart's pan handler
+  chartEl.addEventListener(
+    'mousedown',
+    (e) => {
+      if (state.tool || dragState || state.drawingDrag || posToolDrag) return;
+      const rect = chartEl.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      const x = e.clientX - rect.left;
+
+      // 0) 圖表下單部位工具線
+      if (state.posTool) {
+        const hit = posToolHitAtY(y);
+        if (hit) {
+          e.preventDefault();
+          e.stopPropagation();
+          posToolDrag = hit;
+          document.body.style.cursor = 'ns-resize';
+          document.addEventListener('mousemove', onPosToolDragMove);
+          document.addEventListener('mouseup', onPosToolDragEnd);
+          return;
+        }
+      }
+
+      // 1) SL/TP drag
+      const slTpHit = findDraggableLineAtY(y);
+      if (slTpHit) {
+        e.preventDefault();
+        e.stopPropagation();
+        const lines = posLineMap.get(slTpHit.pos.id);
+        if (!lines) return;
+        dragState = {
+          posId: slTpHit.pos.id,
+          type: slTpHit.type,
+          priceLine:
+            slTpHit.type === 'sl'
+              ? lines.sl
+              : slTpHit.type === 'tp'
+                ? lines.tp
+                : slTpHit.type === 'pentry'
+                  ? lines.entry
+                  : null,
+          originalPrice:
+            slTpHit.type === 'sl'
+              ? slTpHit.pos.stopLoss
+              : slTpHit.type === 'tp'
+                ? slTpHit.pos.takeProfit
+                : slTpHit.pos.entryPrice,
+          origSl: slTpHit.pos.stopLoss,
+          origTp: slTpHit.pos.takeProfit,
+        };
+        // 成本線拖曳設定：用一條暫時虛線跟著游標，放開才真正設定停損/停利
+        if (slTpHit.type === 'entryset') {
+          dragState.tempLine = candleSeries.createPriceLine({
+            price: slTpHit.pos.entryPrice,
+            color: '#b2b5be',
+            lineWidth: 1,
+            lineStyle: 3,
+            title: '↕ 往上設停利 / 往下設停損',
+          });
+        }
+        document.body.style.cursor = 'ns-resize';
+        document.addEventListener('mousemove', onDragMove);
+        document.addEventListener('mouseup', onDragEnd);
+        return;
+      }
+
+      // 2) Drawing select / edit
+      const dHit = hitTestAllDrawings(x, y);
+      if (dHit) {
+        e.preventDefault();
+        e.stopPropagation();
+        selectDrawing(dHit.drawing.id);
+        // Start drag (anchor or whole-shape move)
+        const startTime = chart.timeScale().coordinateToTime(x);
+        const startPrice = candleSeries.coordinateToPrice(y);
+        state.drawingDrag = {
+          drawingId: dHit.drawing.id,
+          mode: dHit.mode, // 'move' | 'anchor'
+          anchorIdx: dHit.idx,
+          startX: x,
+          startY: y,
+          startTime,
+          startPrice,
+          snapshot: JSON.parse(JSON.stringify(dHit.drawing.points)),
+        };
+        document.body.style.cursor = dHit.mode === 'anchor' ? 'crosshair' : 'move';
+        document.addEventListener('mousemove', onDrawingDragMove);
+        document.addEventListener('mouseup', onDrawingDragEnd);
+        return;
+      }
+
+      // 3) Click on empty area while in cursor mode → deselect
+      if (state.selectedDrawingId) {
+        // Wait until mouseup to deselect to allow chart pan still
+        const wasSelected = state.selectedDrawingId;
+        const onUp = (upE) => {
+          const dx = Math.abs(upE.clientX - e.clientX);
+          const dy = Math.abs(upE.clientY - e.clientY);
+          if (dx < 3 && dy < 3) {
+            selectDrawing(null);
+          }
+          document.removeEventListener('mouseup', onUp);
+        };
+        document.addEventListener('mouseup', onUp);
+      }
+    },
+    true,
+  );
+
+  // Touch support：SL/TP/掛單線拖曳 + 繪圖選取/整體移動/錨點拖曳
+  // （點位「放置」走 lightweight-charts 的 tap→subscribeClick，本來就支援觸控）
+  // capture 階段攔截：否則 lightweight-charts 的 canvas handler 會先啟動平移手勢，
+  // 造成「拖線的同時圖表也跟著滑」（滑鼠路徑用的是同樣的 capture + stopPropagation）
+  chartEl.addEventListener(
+    'touchstart',
+    (e) => {
+      if (state.tool || dragState || state.drawingDrag || posToolDrag || e.touches.length !== 1)
+        return;
+      const rect = chartEl.getBoundingClientRect();
+      const y = e.touches[0].clientY - rect.top;
+      const x = e.touches[0].clientX - rect.left;
+
+      // 0) 圖表下單部位工具線（與滑鼠路徑同順序）
+      if (state.posTool) {
+        const ptHit = posToolHitAtY(y);
+        if (ptHit) {
+          e.preventDefault();
+          e.stopPropagation();
+          posToolDrag = ptHit;
+          const ptMove = (ev) => {
+            if (ev.touches.length !== 1) return;
+            ev.preventDefault();
+            onPosToolDragMove({ clientY: ev.touches[0].clientY });
+          };
+          const ptEnd = () => {
+            onPosToolDragEnd();
+            document.removeEventListener('touchmove', ptMove);
+            document.removeEventListener('touchend', ptEnd);
+            document.removeEventListener('touchcancel', ptEnd);
+          };
+          document.addEventListener('touchmove', ptMove, { passive: false });
+          document.addEventListener('touchend', ptEnd);
+          document.addEventListener('touchcancel', ptEnd);
+          return;
+        }
+      }
+
+      const hit = findDraggableLineAtY(y);
+      if (hit) {
+        e.preventDefault();
+        e.stopPropagation();
+        const lines = posLineMap.get(hit.pos.id);
+        if (!lines) return;
+        dragState = {
+          posId: hit.pos.id,
+          type: hit.type,
+          priceLine:
+            hit.type === 'sl'
+              ? lines.sl
+              : hit.type === 'tp'
+                ? lines.tp
+                : hit.type === 'pentry'
+                  ? lines.entry
+                  : null,
+          originalPrice:
+            hit.type === 'sl'
+              ? hit.pos.stopLoss
+              : hit.type === 'tp'
+                ? hit.pos.takeProfit
+                : hit.pos.entryPrice,
+        };
+        dragState.origSl = hit.pos.stopLoss;
+        dragState.origTp = hit.pos.takeProfit;
+        if (hit.type === 'entryset') {
+          dragState.tempLine = candleSeries.createPriceLine({
+            price: hit.pos.entryPrice,
+            color: '#b2b5be',
+            lineWidth: 1,
+            lineStyle: 3,
+            title: '↕ 往上設停利 / 往下設停損',
+          });
+        }
+        const touchMove = (ev) => {
+          if (ev.touches.length !== 1) return;
+          ev.preventDefault();
+          onDragMove({ clientY: ev.touches[0].clientY });
+        };
+        const unbind = () => {
+          document.removeEventListener('touchmove', touchMove);
+          document.removeEventListener('touchend', touchEnd);
+          document.removeEventListener('touchcancel', touchCancel);
+        };
+        const touchEnd = () => {
+          onDragEnd();
+          unbind();
+        };
+        // 來電／通知列／邊緣返回手勢會送 touchcancel：視為放棄本次調整並還原，不可當成確認
+        const touchCancel = () => {
+          cancelLineDrag();
+          unbind();
+        };
+        document.addEventListener('touchmove', touchMove, { passive: false });
+        document.addEventListener('touchend', touchEnd);
+        document.addEventListener('touchcancel', touchCancel);
+        return;
+      }
+      // 繪圖：碰到就選取（浮出刪除列），並可直接拖曳（錨點細調 / 整體平移）
+      const dHit = hitTestAllDrawings(x, y);
+      if (dHit) {
+        e.preventDefault();
+        e.stopPropagation();
+        selectDrawing(dHit.drawing.id);
+        const startTime = chart.timeScale().coordinateToTime(x);
+        const startPrice = candleSeries.coordinateToPrice(y);
+        state.drawingDrag = {
+          drawingId: dHit.drawing.id,
+          mode: dHit.mode,
+          anchorIdx: dHit.idx,
+          startX: x,
+          startY: y,
+          startTime,
+          startPrice,
+          snapshot: JSON.parse(JSON.stringify(dHit.drawing.points)),
+        };
+        const dMove = (ev) => {
+          if (ev.touches.length !== 1) return;
+          ev.preventDefault();
+          onDrawingDragMove({
+            clientX: ev.touches[0].clientX,
+            clientY: ev.touches[0].clientY,
+          });
+        };
+        const dUnbind = () => {
+          document.removeEventListener('touchmove', dMove);
+          document.removeEventListener('touchend', dEnd);
+          document.removeEventListener('touchcancel', dCancel);
+        };
+        const dEnd = () => {
+          onDrawingDragEnd();
+          dUnbind();
+        };
+        // 中斷時把圖形還原成拖曳前的座標
+        const dCancel = () => {
+          const dd = state.drawingDrag;
+          if (dd) {
+            const dr = getCurrentDrawings().find((x) => x.id === dd.drawingId);
+            if (dr && dd.snapshot) dr.points = JSON.parse(JSON.stringify(dd.snapshot));
+          }
+          onDrawingDragEnd();
+          redrawDrawings();
+          dUnbind();
+        };
+        document.addEventListener('touchmove', dMove, { passive: false });
+        document.addEventListener('touchend', dEnd);
+        document.addEventListener('touchcancel', dCancel);
+        return;
+      }
+      // 空白處輕點：取消選取（與桌面行為一致）
+      if (state.selectedDrawingId) {
+        const t0 = e.touches[0];
+        const onTouchUp = (upE) => {
+          const t1 = upE.changedTouches && upE.changedTouches[0];
+          if (
+            t1 &&
+            Math.abs(t1.clientX - t0.clientX) < 6 &&
+            Math.abs(t1.clientY - t0.clientY) < 6
+          ) {
+            selectDrawing(null);
+          }
+          document.removeEventListener('touchend', onTouchUp);
+          document.removeEventListener('touchcancel', onTouchUp);
+        };
+        document.addEventListener('touchend', onTouchUp);
+        document.addEventListener('touchcancel', onTouchUp);
+      }
+    },
+    { passive: false, capture: true },
+  );
+}
+
+// ---- Drawing selection / drag ----
+function selectDrawing(id) {
+  state.selectedDrawingId = id;
+  if (id) {
+    const d = getCurrentDrawings().find((x) => x.id === id);
+    if (d) {
+      const c = d.style?.color || d.color;
+      $$('#draw-color-row button').forEach((b) =>
+        b.classList.toggle('active', b.dataset.color === c),
+      );
+    }
+  }
+  redrawDrawings();
+  if (typeof refreshTemplatesPanel === 'function') refreshTemplatesPanel();
+}
+
+function onDrawingDragMove(e) {
+  const dd = state.drawingDrag;
+  if (!dd) return;
+  const chartEl = $('chart');
+  const rect = chartEl.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  const newTime = chart.timeScale().coordinateToTime(x);
+  const newPrice = candleSeries.coordinateToPrice(y);
+  if (newTime == null || newPrice == null) return;
+
+  const d = getCurrentDrawings().find((x) => x.id === dd.drawingId);
+  if (!d) return;
+
+  if (dd.mode === 'anchor') {
+    const idx = dd.anchorIdx;
+    if (d.type === 'hline') {
+      d.points[0] = { time: dd.snapshot[0].time, price: newPrice };
+    } else if (d.type === 'vline') {
+      d.points[0] = { time: newTime, price: dd.snapshot[0].price };
+    } else {
+      d.points[idx] = { time: newTime, price: newPrice };
+    }
+  } else {
+    // 'move': 以「K 棒索引」平移（不是時間戳相加），落點才保證是真實 K 棒
+    const maxIdx = Math.min(
+      state.cursorIndex >= 0 ? state.cursorIndex : state.candles.length - 1,
+      state.candles.length - 1,
+    );
+    // 位移量整體 clamp（不是逐點）：碰到邊界時整個圖形一起停住，
+    // 逐點 clamp 會讓遠端卡住、近端繼續走，圖形被壓扁且拖不回來
+    const idxs = dd.snapshot.map((pt) => timeToIndex(pt.time));
+    const shapeMin = Math.min(...idxs),
+      shapeMax = Math.max(...idxs);
+    const deltaIdx = Math.max(
+      -shapeMin,
+      Math.min(maxIdx - shapeMax, timeToIndex(newTime) - timeToIndex(dd.startTime)),
+    );
+    const shiftTime = (t) => {
+      const ni = timeToIndex(t) + deltaIdx;
+      return state.candles[ni] ? state.candles[ni].time : t;
+    };
+    const deltaPrice = newPrice - dd.startPrice;
+    for (let i = 0; i < d.points.length; i++) {
+      const orig = dd.snapshot[i];
+      d.points[i] = {
+        time: shiftTime(orig.time),
+        price: orig.price + deltaPrice,
+      };
+    }
+    if (d.type === 'hline') d.points = [{ time: d.points[0].time, price: d.points[0].price }];
+  }
+  redrawDrawings();
+}
+
+function onDrawingDragEnd() {
+  if (!state.drawingDrag) return;
+  state.drawingDrag = null;
+  document.body.style.cursor = '';
+  document.removeEventListener('mousemove', onDrawingDragMove);
+  document.removeEventListener('mouseup', onDrawingDragEnd);
+  saveStorage();
+}
+
+function deleteSelectedDrawing() {
+  const id = state.selectedDrawingId;
+  if (!id) return;
+  const arr = getCurrentDrawings();
+  const idx = arr.findIndex((x) => x.id === id);
+  if (idx < 0) return;
+  arr.splice(idx, 1);
+  state.selectedDrawingId = null;
+  saveStorage();
+  redrawDrawings();
+  showToast('已刪除', 'success');
+}
+
+function recolorSelectedDrawing(color) {
+  const id = state.selectedDrawingId;
+  if (!id) return false;
+  const d = getCurrentDrawings().find((x) => x.id === id);
+  if (!d) return false;
+  if (!d.style) d.style = { color, lineWidth: 1.5, lineStyle: 0, label: '' };
+  d.style.color = color;
+  d.color = color; // back-compat
+  saveStorage();
+  redrawDrawings();
+  return true;
+}
+
+// ---------- Replay ----------
+function setSymbolTF(sym, tf) {
+  if (state.blind) {
+    showToast('盲測進行中，無法切換標的/週期', 'error');
+    syncTopbarUI();
+    return;
+  }
+  const tfs = symInfo(sym).tfs;
+  if (!tfs.includes(tf)) tf = tfs.includes('1d') ? '1d' : tfs[0];
+  state.symbol = sym;
+  state.timeframe = tf;
+  syncTopbarUI();
+  loadAndStart();
+}
+
+// Topbar UI 同步：下拉選單、週期按鈕可用性、盲測狀態
+function syncTopbarUI() {
+  const blind = !!state.blind;
+  const sel = $('symbol-select');
+  sel.style.display = blind ? 'none' : '';
+  sel.disabled = blind;
+  $('blind-chip').style.display = blind ? '' : 'none';
+  if (!blind && SYMBOLS[state.symbol]) sel.value = state.symbol;
+  $$('#tf-seg button').forEach((b) => {
+    b.classList.toggle('active', b.dataset.tf === state.timeframe);
+    b.disabled = blind || !symInfo(state.symbol).tfs.includes(b.dataset.tf);
+  });
+  const bb = $('btn-blind');
+  bb.textContent = blind ? '⏹ 結束盲測' : '🎲 盲測';
+  bb.classList.toggle('blind-active', blind);
+  $('jump-date').disabled = blind;
+  $('btn-jump').disabled = blind;
+}
+
+async function loadAndStart() {
+  stopPlay();
+  if (typeof clearReviewLines === 'function') clearReviewLines(); // 換場景時移除檢討線
+  if (dragState) cancelLineDrag(); // 進行中的線拖曳不可跨到新標的
+  if (state.drawingDrag) onDrawingDragEnd();
+  if (_closeTargetId) {
+    // 開著的平倉視窗屬於舊標的，一併收掉
+    $('close-modal').classList.remove('show');
+    _closeTargetId = null;
+  }
+  // Reset in-progress drawing when switching context
+  resetPendingPoints();
+  state.posTool = null;
+  if (typeof updatePosToolButtons === 'function') updatePosToolButtons();
+  const candles = await loadCandles(state.symbol, state.timeframe);
+  state.candles = candles;
+  applyPriceFormat();
+  if (!candles.length) {
+    state.cursorIndex = -1;
+    renderChart();
+    updateReplayInfo();
+    return;
+  }
+  // Default starting cursor: 30% into history (give some context for trading)
+  state.cursorIndex = Math.floor(candles.length * 0.3);
+  renderChart();
+  updateReplayInfo();
+  refreshOrderForm();
+  renderPositions();
+  renderTrades();
+  renderReport();
+  updateHotStats();
+}
+
+function updateReplayInfo() {
+  const c = state.candles[state.cursorIndex];
+  if (c) {
+    if (state.blind) {
+      const done = state.cursorIndex - state.blind.startIndex;
+      $('replay-dt').textContent = '❓ 日期隱藏';
+      $('replay-ix').textContent = `盲測 ${done} / ${state.blind.playBars} 根`;
+    } else {
+      $('replay-dt').textContent = fmtDateTime(c.time, state.timeframe);
+      $('replay-ix').textContent = `K棒 ${state.cursorIndex + 1} / ${state.candles.length}`;
+    }
+  } else {
+    $('replay-dt').textContent = '—';
+    $('replay-ix').textContent = '—';
+  }
+}
+
+function advanceBar(n = 1) {
+  if (!state.candles.length) return;
+  let blindDone = false;
+  for (let i = 0; i < n; i++) {
+    if (state.cursorIndex >= state.candles.length - 1) {
+      stopPlay();
+      break;
+    }
+    state.cursorIndex++;
+    // Check SL/TP against the new bar
+    const newBar = state.candles[state.cursorIndex];
+    checkPositionTriggers(newBar);
+    if (state.blind) {
+      state.blind.cursorIndex = state.cursorIndex;
+      if (state.cursorIndex >= state.blind.endIndex) {
+        blindDone = true;
+        break;
+      }
+    }
+  }
+  renderChart();
+  updateReplayInfo();
+  refreshOrderForm();
+  renderPositions();
+  updateHotStats();
+  // 盲測進度每 10 根落地一次（原本只靠 beforeunload，瀏覽器崩潰或手機被回收就會退回舊位置）
+  if (state.blind && state.cursorIndex % 10 === 0) saveStorage();
+  // 爆倉檢查放在整段推進跑完後只做一次：權益要掃全部交易與部位，逐根算既昂貴，
+  // 又會讓一次 advanceBar(10) 連彈好幾次提示。連播是每 tick 呼叫 advanceBar(1)，逐根照樣覆蓋到。
+  // 排在 blindDone 前面：真的沒錢了就是出局，不該被記成「跑完設定長度」的正常收場。
+  if (checkBlowUp()) return;
+  if (blindDone) {
+    stopPlay();
+    finishBlindSession('跑完設定長度');
+  }
+}
+function retreatBar(n = 1) {
+  // Note: retreating doesn't undo trades — only changes the chart cursor
+  if (!state.candles.length) return;
+  const min = state.blind ? state.blind.startIndex : 0;
+  state.cursorIndex = Math.max(min, state.cursorIndex - n);
+  if (state.blind) state.blind.cursorIndex = state.cursorIndex;
+  renderChart();
+  updateReplayInfo();
+  refreshOrderForm();
+}
+
+function startPlay() {
+  if (state.isPlaying) return;
+  state.isPlaying = true;
+  $('btn-play').textContent = '⏸';
+  const speedToMs = (s) => Math.max(80, 1200 - (s - 1) * 130); // 1->1200ms, 10->30ms... clamp
+  const tick = () => {
+    advanceBar(1);
+    if (state.isPlaying && state.cursorIndex < state.candles.length - 1) {
+      state.playTimer = setTimeout(tick, speedToMs(state.playSpeed));
+    } else {
+      stopPlay();
+    }
+  };
+  tick();
+}
+function stopPlay() {
+  state.isPlaying = false;
+  if (state.playTimer) {
+    clearTimeout(state.playTimer);
+    state.playTimer = null;
+  }
+  $('btn-play').textContent = '▶';
+  // 盲測進度落地（含 cursor），中途重整可續玩
+  if (state.blind) saveStorage();
+}
+function togglePlay() {
+  state.isPlaying ? stopPlay() : startPlay();
+}
+
+function jumpToDate(dateStr) {
+  if (state.blind) {
+    showToast('盲測中無法跳日期', 'error');
+    return;
+  }
+  if (!dateStr || !state.candles.length) return;
+  const target = Math.floor(new Date(dateStr + 'T00:00:00').getTime() / 1000);
+  // Find the first candle >= target
+  let idx = state.candles.findIndex((c) => c.time >= target);
+  if (idx < 0) idx = state.candles.length - 1;
+  state.cursorIndex = idx;
+  renderChart();
+  updateReplayInfo();
+  refreshOrderForm();
+}
+
+// ---------- SL/TP triggers ----------
+function checkPositionTriggers(newBar) {
+  let changed = false; // 需要重繪（成交或平倉都算）
+  let didClose = false; // 真的有新平倉——只有這時才檢查連敗，掛單成交不該觸發熔斷
+  for (const p of state.positions) {
+    if (p.symbol !== state.symbol || p.timeframe !== state.timeframe || !inScope(p)) continue;
+    // 時間守衛：回放檢討或倒退 K 棒時，游標會回到部位建立之前——
+    // 那些「過去」的 K 棒不該觸發成交或停損停利（否則出場時間會早於進場時間）
+    // 用 <= ：進場/成交當根本來就不檢查停損停利，倒退後重走那一根也不該補觸發
+    // （否則會產生「出場時間 = 進場時間」、持有 0 根的假停損）
+    const refTime = p.status === 'pending' ? (p.createdBarTime ?? p.entryTime) : p.entryTime;
+    if (refTime != null && newBar.time <= refTime) continue;
+    // 掛單：價格觸及進場價才成交；成交當根不檢查停損/停利（下一根才開始）
+    if (p.status === 'pending') {
+      if (newBar.low <= p.entryPrice && p.entryPrice <= newBar.high) {
+        p.status = 'open';
+        p.entryTime = newBar.time;
+        p.chartTime = newBar.time;
+        saveStorage();
+        showToast(
+          `✓ 掛單成交：${p.side === 'long' ? '多' : '空'}單 @ ${fmtPrice(p.entryPrice)}`,
+          'success',
+        );
+        changed = true;
+      }
+      continue;
+    }
+    if (p.status !== 'open') continue;
+    let exitPrice = null,
+      exitReason = null;
+    // 停損/停利可能未設（選填）——只檢查有設的那條
+    if (p.side === 'long') {
+      // SL fills first if both hit
+      if (p.stopLoss != null && newBar.low <= p.stopLoss) {
+        exitPrice = p.stopLoss;
+        exitReason = '達停損';
+      } else if (p.takeProfit != null && newBar.high >= p.takeProfit) {
+        exitPrice = p.takeProfit;
+        exitReason = '達停利';
+      }
+    } else {
+      if (p.stopLoss != null && newBar.high >= p.stopLoss) {
+        exitPrice = p.stopLoss;
+        exitReason = '達停損';
+      } else if (p.takeProfit != null && newBar.low <= p.takeProfit) {
+        exitPrice = p.takeProfit;
+        exitReason = '達停利';
+      }
+    }
+    if (exitPrice != null) {
+      closePosition(p, exitPrice, exitReason, newBar.time, '系統觸發 SL/TP');
+      changed = true;
+      didClose = true;
+      // 若平倉視窗正對著這個部位，關掉它（否則會留下一個按了沒反應的死視窗）
+      if (_closeTargetId === p.id) {
+        $('close-modal').classList.remove('show');
+        _closeTargetId = null;
+      }
+    }
+  }
+  if (changed) {
+    renderTrades();
+    renderReport();
+    if (didClose) checkLossStreak();
+  }
+}
+
+// ---------- Order placement ----------
+function refreshOrderForm() {
+  // Default entry = current bar close
+  const c = state.candles[state.cursorIndex];
+  if (!c) return;
+  // 低價標的（SHIB/PEPE 等）需要更多小數位，否則 0.5% 的停損距離會被捨進位吃掉
+  const dp = priceDp(c.close);
+  const entryEl = $('order-entry');
+  if (!entryEl.dataset.touched) entryEl.value = c.close.toFixed(dp);
+  // 停損/停利為選填：不自動帶入（部位工具會填三價；使用者填過的值保留）
+  const slEl = $('order-sl'),
+    tpEl = $('order-tp');
+  if (!slEl.dataset.touched) slEl.value = '';
+  if (!tpEl.dataset.touched) tpEl.value = '';
+  updateOrderSummary();
+}
+function clearOrderTouched() {
+  ['order-entry', 'order-sl', 'order-tp'].forEach((id) => delete $(id).dataset.touched);
+}
+function setOrderSide(side) {
+  state.orderSide = side;
+  $$('.order-side-toggle button').forEach((b) =>
+    b.classList.toggle('active', b.dataset.orderSide === side),
+  );
+  const submitBtn = $('btn-submit-order');
+  submitBtn.className = 'btn-submit ' + side;
+  submitBtn.textContent = side === 'long' ? '送出做多單' : '送出做空單';
+  // Reset SL/TP suggestions if not touched
+  refreshOrderForm();
+}
+function calcOrderSize(entry, sl, riskPct, balance) {
+  // 未設停損時以進場價 1% 當預設風險距離估算部位（單筆風險金額不變）
+  const noSl = !(sl > 0);
+  const dist = noSl ? entry * 0.01 : Math.abs(entry - sl);
+  if (dist <= 0) return { size: 0, riskAmount: 0, dist, noSl };
+  const riskAmount = balance * (riskPct / 100);
+  const ptValue = getPointValue(state.symbol);
+  const size = riskAmount / (dist * ptValue);
+  return { size, riskAmount, dist, noSl };
+}
+function updateOrderSummary() {
+  const entry = +$('order-entry').value;
+  const sl = +$('order-sl').value || null;
+  const tp = +$('order-tp').value || null;
+  const riskPct = +$('order-risk').value;
+  const balance = state.settings.balance;
+  const side = state.orderSide;
+
+  const summary = $('order-summary');
+  if (!entry || !riskPct) {
+    summary.innerHTML =
+      '<div class="row"><span>填進場價與風險 % 後顯示摘要（停損/停利選填）</span></div>';
+    $('order-size-hint').textContent = '部位大小將依停損距離自動計算';
+    return;
+  }
+  // 方向驗證：只驗有填的欄位（失敗時同步清掉 size hint，避免殘留舊值）
+  if (sl != null && (side === 'long' ? sl >= entry : sl <= entry)) {
+    summary.innerHTML = `<div class="row"><span style="color:var(--warn);">${side === 'long' ? '停損須低於進場價' : '停損須高於進場價'}</span></div>`;
+    $('order-size-hint').textContent = '部位大小將依停損距離自動計算';
+    return;
+  }
+  if (tp != null && (side === 'long' ? tp <= entry : tp >= entry)) {
+    summary.innerHTML = `<div class="row"><span style="color:var(--warn);">${side === 'long' ? '停利須高於進場價' : '停利須低於進場價'}</span></div>`;
+    $('order-size-hint').textContent = '部位大小將依停損距離自動計算';
+    return;
+  }
+  const { size, riskAmount, dist, noSl } = calcOrderSize(entry, sl, riskPct, balance);
+  const ptValue = getPointValue(state.symbol);
+
+  const sInfo = symInfo(state.symbol);
+  $('order-size-hint').textContent =
+    `部位大小 ≈ ${size.toFixed(sInfo.sizeDecimals)} ${sInfo.sizeUnit}` +
+    (noSl ? '（未設停損，以進場價 1% 估算）' : '');
+  const rows = [];
+  rows.push(
+    noSl
+      ? '<div class="row"><span>停損</span><span class="v">未設，可進場後在圖上補</span></div>'
+      : `<div class="row"><span>停損距離</span><span class="v">${fmtPrice(dist)} 點</span></div>`,
+  );
+  rows.push(
+    `<div class="row risk"><span>單筆風險</span><span class="v">${fmtMoney(riskAmount)}</span></div>`,
+  );
+  if (tp != null) {
+    const rewardDist = Math.abs(tp - entry);
+    rows.push(
+      `<div class="row reward"><span>停利目標</span><span class="v">${fmtMoney(rewardDist * ptValue * size)}</span></div>`,
+    );
+    rows.push(
+      `<div class="row"><span>盈虧比 R:R</span><span class="v">1:${(rewardDist / dist).toFixed(2)}${noSl ? '（估）' : ''}</span></div>`,
+    );
+  } else {
+    rows.push(
+      '<div class="row"><span>停利</span><span class="v">未設，可進場後在圖上補</span></div>',
+    );
+  }
+  summary.innerHTML = rows.join('');
+}
+
+let _submitLock = 0;
+function submitOrder() {
+  const c = state.candles[state.cursorIndex];
+  if (!c) {
+    showToast('請先載入資料', 'error');
+    return;
+  }
+  // 手指/滑鼠連點兩下會送出兩張一模一樣的單，風險直接翻倍
+  // （鎖只在「真的建倉」時才寫入——見下方 _submitLock = Date.now()；
+  //   否則被驗證退件的單也會吃掉冷卻時間，使用者改好立刻重送會靜默失敗）
+  if (Date.now() - _submitLock < 400) return;
+  const entry = +$('order-entry').value;
+  const sl = +$('order-sl').value || null;
+  const tp = +$('order-tp').value || null;
+  const riskPct = +$('order-risk').value;
+  const strategy = $('order-strategy').value.trim();
+  const reason = $('order-reason').value.trim();
+  const side = state.orderSide;
+  if (!entry || !riskPct) {
+    showToast('請填寫進場價與風險 %', 'error');
+    return;
+  }
+  // 停損/停利選填：有填才驗方向；未設停損以進場價 1% 估算部位，之後可在圖上補設
+  if (sl != null && (side === 'long' ? sl >= entry : sl <= entry)) {
+    showToast(side === 'long' ? '停損須低於進場價' : '停損須高於進場價', 'error');
+    return;
+  }
+  if (tp != null && (side === 'long' ? tp <= entry : tp >= entry)) {
+    showToast(side === 'long' ? '停利須高於進場價' : '停利須低於進場價', 'error');
+    return;
+  }
+  // 策略標籤與進場理由皆為選填（教練建議填，但不擋單）
+
+  const { size, riskAmount } = calcOrderSize(entry, sl, riskPct, state.settings.balance);
+  if (size <= 0) {
+    showToast('部位計算失敗', 'error');
+    return;
+  }
+
+  // 掛單判定：進場價不在當根 K 棒範圍內 → 掛單（pending），等價格觸及才成交
+  // 成交前不會觸發停損/停利，避免「沒成交卻達停利」的幽靈獲利
+  const filled = entry <= c.high && entry >= c.low;
+  const pos = {
+    id: uid(),
+    symbol: state.symbol,
+    timeframe: state.timeframe,
+    side,
+    entryTime: c.time,
+    entryPrice: entry,
+    size,
+    stopLoss: sl,
+    takeProfit: tp,
+    riskPct,
+    riskAmount,
+    strategyTag: strategy || '—',
+    entryReason: reason || '—',
+    status: filled ? 'open' : 'pending',
+    createdAt: Date.now(),
+    createdBarTime: c.time, // 下單當根：掛單成交判定的時間下限（回放倒退時不誤成交）
+    chartTime: c.time,
+    pv: getPointValue(state.symbol), // 點值快照（盲測正規化後仍算出正確金額）
+    blindId: state.blind ? state.blind.id : null,
+  };
+  state.positions.push(pos);
+  _submitLock = Date.now(); // 建倉成功才起算冷卻
+  saveStorage();
+
+  // Reset order form (keep risk/strategy)
+  clearPosTool();
+  $('order-reason').value = '';
+  $('order-strategy').value = '';
+  clearOrderTouched();
+  refreshOrderForm();
+  renderPositions();
+  redrawPositionLines();
+  updateHotStats();
+
+  // Switch to positions tab
+  switchSidePane('positions');
+  showToast(
+    filled
+      ? `✓ 已建立${side === 'long' ? '多' : '空'}單 @ ${entry}`
+      : `⏳ 已掛${side === 'long' ? '多' : '空'}單 @ ${entry}，價格觸及才會成交`,
+    'success',
+  );
+}
+
+// ---------- Position management ----------
+function renderPositions() {
+  const cont = $('positions-list');
+  const c = state.candles[state.cursorIndex];
+  // 盲測中只顯示本輪盲測部位；平時只顯示一般部位（含未成交掛單）
+  const open = state.positions.filter(
+    (p) => (p.status === 'open' || p.status === 'pending') && inScope(p),
+  );
+  $('badge-pos').style.display = open.length > 0 ? 'inline' : 'none';
+  $('pos-count').textContent = open.length;
+  // 一鍵平倉只在「真的按得動」時出現：一鍵平倉碰不到別的標的／週期，
+  // 所以光有其他標的部位不算數，否則按下去只會跳一句「沒有可處理的部位」
+  $('btn-close-all').style.display = open.some(
+    (p) => p.symbol === state.symbol && p.timeframe === state.timeframe,
+  )
+    ? 'inline-block'
+    : 'none';
+
+  if (!open.length) {
+    cont.innerHTML = state.blind
+      ? '<div class="empty">本輪盲測尚無持倉<br>切到「下單」分頁建立模擬交易</div>'
+      : '<div class="empty">目前無持倉<br>切到「下單」分頁建立模擬交易</div>';
+    return;
+  }
+  cont.innerHTML = open
+    .map((p) => {
+      const pending = p.status === 'pending';
+      const isCurrent = p.symbol === state.symbol && p.timeframe === state.timeframe;
+      const cur = isCurrent && c ? c.close : p.entryPrice;
+      const dir = p.side === 'long' ? 1 : -1;
+      const pnlPts = pending ? 0 : (cur - p.entryPrice) * dir;
+      const pnl = pnlPts * posPV(p) * p.size;
+      const rMul = p.riskAmount > 0 ? pnl / p.riskAmount : 0;
+      const pnlClass = pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+      return `
+<div class="pos-card ${p.side}">
+  <div class="pos-head">
+    <div>
+      <span class="pos-side ${p.side}">${p.side === 'long' ? '多' : '空'}</span>
+      <span style="color:var(--text);font-weight:600;margin-left:6px;">${dispSym(p)}</span>
+      <span style="color:var(--text-3);margin-left:4px;">${p.timeframe}</span>
+    </div>
+    ${
+      pending
+        ? '<div class="pos-pnl" style="color:var(--text-3);">⏳ 掛單中</div>'
+        : !isCurrent
+          ? '<div class="pos-pnl" style="color:var(--text-3);">—</div>'
+          : `<div class="pos-pnl ${pnlClass}">${fmtMoney(pnl)} <span style="font-size:10px;">${fmtR(rMul)}</span></div>`
+    }
+  </div>
+  <div class="pos-row"><span>${pending ? '掛單價' : '進場'}</span><span class="v">${fmtPrice(p.entryPrice)} · ${isMasked(p) ? '❓' : fmtDateTime(p.entryTime, p.timeframe)}</span></div>
+  <div class="pos-row"><span>停損</span><span class="v">${
+    p.stopLoss != null
+      ? `${fmtPrice(p.stopLoss)} · <span style="color:${pnlAtPrice(p, p.stopLoss) >= 0 ? 'var(--accent-2)' : 'var(--danger-2)'};">${fmtMoneySigned(pnlAtPrice(p, p.stopLoss))}</span>`
+      : '—（未設）'
+  }</span></div>
+  <div class="pos-row"><span>停利</span><span class="v">${
+    p.takeProfit != null
+      ? `${fmtPrice(p.takeProfit)} · <span style="color:${pnlAtPrice(p, p.takeProfit) >= 0 ? 'var(--accent-2)' : 'var(--danger-2)'};">${fmtMoneySigned(pnlAtPrice(p, p.takeProfit))}</span>`
+      : '—（未設）'
+  }</span></div>
+  <div class="pos-row"><span>部位</span><span class="v">${sizeStr(p)} · 風險 ${fmtMoney(p.riskAmount)}</span></div>
+  <div class="pos-row"><span>策略</span><span class="v">${escHtml(p.strategyTag)}</span></div>
+  ${
+    isCurrent
+      ? pending
+        ? `<div class="pos-actions">
+    <button class="btn-close-pos" data-cancel-pos="${p.id}">取消掛單</button>
+  </div>`
+        : `<div class="pos-actions">
+    ${p.stopLoss == null ? `<button class="btn-add-line" data-add-sl="${p.id}">＋停損</button>` : ''}
+    ${p.takeProfit == null ? `<button class="btn-add-line" data-add-tp="${p.id}">＋停利</button>` : ''}
+    <button class="btn-close-pos" data-close-pos="${p.id}">市價平倉</button>
+  </div>`
+      : `<div class="field-hint" style="margin-top:6px;">切換到 ${dispSym(p)} ${p.timeframe} 才能管理</div>`
+  }
+</div>
+    `;
+    })
+    .join('');
+  cont
+    .querySelectorAll('[data-close-pos]')
+    .forEach((b) => b.addEventListener('click', () => openCloseModal(b.dataset.closePos)));
+  cont
+    .querySelectorAll('[data-add-sl]')
+    .forEach((b) => b.addEventListener('click', () => addPosStop(b.dataset.addSl, 'sl')));
+  cont
+    .querySelectorAll('[data-add-tp]')
+    .forEach((b) => b.addEventListener('click', () => addPosStop(b.dataset.addTp, 'tp')));
+  cont
+    .querySelectorAll('[data-cancel-pos]')
+    .forEach((b) => b.addEventListener('click', () => cancelPendingOrder(b.dataset.cancelPos)));
+}
+
+// 取消未成交掛單（不留任何紀錄）
+function cancelPendingOrder(posId) {
+  const p = state.positions.find((x) => x.id === posId && x.status === 'pending');
+  if (!p) return;
+  state.positions = state.positions.filter((x) => x.id !== posId);
+  saveStorage();
+  renderPositions();
+  redrawPositionLines();
+  updateHotStats();
+  showToast('已取消掛單', 'success');
+}
+
+// 一鍵平倉：把當前 scope 裡「按得動」的部位一次清乾淨
+// 只碰同標的同週期——理由同 confirmManualClose：拿別的商品的 K 棒平倉，
+// 會寫出價格與時間都錯亂的假交易，之後整份統計都不能信
+function closeAllPositions() {
+  const c = state.candles[state.cursorIndex];
+  if (!c) return;
+  const here = (p) => p.symbol === state.symbol && p.timeframe === state.timeframe;
+  const scoped = state.positions.filter(
+    (p) => (p.status === 'open' || p.status === 'pending') && inScope(p),
+  );
+  const opens = scoped.filter((p) => p.status === 'open' && here(p));
+  const pendings = scoped.filter((p) => p.status === 'pending' && here(p));
+  const others = scoped.filter((p) => !here(p));
+  if (!opens.length && !pendings.length) {
+    showToast('目前沒有可一鍵處理的部位', 'error');
+    return;
+  }
+  if (
+    !confirm(
+      `確定一鍵平倉？將以現價平掉 ${opens.length} 筆持倉、取消 ${pendings.length} 張掛單。此動作會寫入交易紀錄，無法復原。`,
+    )
+  )
+    return;
+  for (const p of opens) closePosition(p, c.close, '一鍵平倉', c.time, '一鍵平倉');
+  // 掛單直接移除、不留紀錄（未成交不算交易），比照 cancelPendingOrder
+  const dropIds = new Set(pendings.map((p) => p.id));
+  if (dropIds.size) state.positions = state.positions.filter((x) => !dropIds.has(x.id));
+  // 平倉視窗若正對著剛被清掉的部位，一併收掉，否則會留下一個按了沒反應的死視窗
+  if (
+    _closeTargetId &&
+    (dropIds.has(_closeTargetId) || opens.some((p) => p.id === _closeTargetId))
+  ) {
+    $('close-modal').classList.remove('show');
+    _closeTargetId = null;
+  }
+  saveStorage();
+  // 整批跑完才重繪一次：逐筆重繪在十幾筆部位時會明顯卡頓
+  renderPositions();
+  renderTrades();
+  renderReport();
+  updateHotStats();
+  redrawPositionLines();
+  showToast(
+    `✓ 已平倉 ${opens.length} 筆、取消 ${pendings.length} 張掛單` +
+      (others.length ? `；另有 ${others.length} 筆在其他標的，切換過去才能處理` : ''),
+    'success',
+  );
+  // 熔斷同樣只跑一次：批次一次產生多筆虧損，逐筆檢查會連彈好幾個 modal
+  // didClose 口徑比照 checkPositionTriggers——取消掛單不是平倉，不該觸發熔斷
+  // 爆倉優先：已經出局就不必再提醒連敗
+  if (!checkBlowUp() && opens.length) checkLossStreak();
+}
+
+// 進場後補設停損/停利：先放預設位置，再讓使用者到圖上拖曳調整
+function addPosStop(posId, type) {
+  const p = state.positions.find((x) => x.id === posId);
+  const c = state.candles[state.cursorIndex];
+  if (!p || !c) return;
+  if (type === 'sl' ? p.stopLoss != null : p.takeProfit != null) return; // 已有就不覆蓋
+  const dp = priceDp(c.close);
+  const dir = p.side === 'long' ? 1 : -1;
+  let price;
+  if (type === 'sl') {
+    // 與停利對稱：取現價與進場價中較不利的一側再外推，避免「達停損」卻是獲利出場
+    const base =
+      p.side === 'long' ? Math.min(c.close, p.entryPrice) : Math.max(c.close, p.entryPrice);
+    price = base - dir * base * 0.01;
+  } else {
+    // 停利以「現價與進場價較有利一側」再外推 1%：虧損中補停利不會落在進場價錯邊
+    // （否則出場會被標成「達停利」但實際是虧損，污染統計）
+    const base =
+      p.side === 'long' ? Math.max(c.close, p.entryPrice) : Math.min(c.close, p.entryPrice);
+    price = base + dir * base * 0.01;
+  }
+  if (type === 'sl') p.stopLoss = +price.toFixed(dp);
+  else p.takeProfit = +price.toFixed(dp);
+  saveStorage();
+  redrawPositionLines();
+  renderPositions();
+  const newPrice = type === 'sl' ? p.stopLoss : p.takeProfit;
+  showToast(
+    `已加上${type === 'sl' ? '停損' : '停利'}線 @ ${fmtPrice(newPrice)}（預期 ${fmtMoneySigned(pnlAtPrice(p, newPrice))}），可在圖表上拖曳調整`,
+    'success',
+  );
+}
+
+let _closeTargetId = null;
+let _closeFrac = 1; // 平倉比例（分批出場）
+function updateCloseInfo() {
+  const p = state.positions.find((x) => x.id === _closeTargetId);
+  const c = state.candles[state.cursorIndex];
+  if (!p || !c) return;
+  const dir = p.side === 'long' ? 1 : -1;
+  const pnlPts = (c.close - p.entryPrice) * dir;
+  const part = p.size * _closeFrac;
+  const pnl = pnlPts * posPV(p) * part;
+  const info = symInfo(p.symbol);
+  $('close-info').innerHTML = `
+    <strong>${dispSym(p)}</strong> ${p.side === 'long' ? '多單' : '空單'} ·
+    進場 ${fmtPrice(p.entryPrice)} → 平倉 <strong>${fmtPrice(c.close)}</strong><br>
+    平掉 <strong>${part.toFixed(info.sizeDecimals)} ${info.sizeUnit}</strong>（${Math.round(_closeFrac * 100)}%）
+    ${_closeFrac < 1 ? `，續抱 ${(p.size - part).toFixed(info.sizeDecimals)} ${info.sizeUnit}` : ''}<br>
+    預估盈虧: <strong style="color:${pnl >= 0 ? 'var(--accent-2)' : 'var(--danger-2)'}">${fmtMoney(pnl)}</strong>
+  `;
+}
+function openCloseModal(posId) {
+  const p = state.positions.find((x) => x.id === posId);
+  if (!p || p.status !== 'open') return; // 未成交掛單只能取消，不能平倉
+  // 非當前標的/週期不能平倉：出場價會取到別的商品的 K 棒
+  if (p.symbol !== state.symbol || p.timeframe !== state.timeframe) {
+    showToast(`請先切換到 ${symLabel(p.symbol)} ${p.timeframe} 再平倉`, 'error');
+    return;
+  }
+  _closeTargetId = posId;
+  const c = state.candles[state.cursorIndex];
+  if (!c) return;
+  _closeFrac = 1;
+  $$('#close-frac-row button').forEach((b) => b.classList.toggle('active', b.dataset.frac === '1'));
+  updateCloseInfo();
+  const dir = p.side === 'long' ? 1 : -1;
+  const pnl = (c.close - p.entryPrice) * dir * posPV(p) * p.size;
+  $('close-reason').value = pnl >= 0 ? '提前獲利了結' : '提前砍單停損';
+  $('close-note').value = '';
+  $('close-modal').classList.add('show');
+}
+// 部分平倉：平掉的部分成為一筆獨立交易紀錄（風險額按比例分攤，R 各算各的）
+function closePartialPosition(p, frac, exitPrice, exitReason, exitTime, exitNote) {
+  const part = p.size * frac;
+  const partRisk = p.riskAmount * frac;
+  const partPct = p.riskPct * frac;
+  const dir = p.side === 'long' ? 1 : -1;
+  const pnlPts = (exitPrice - p.entryPrice) * dir;
+  const pnl = pnlPts * posPV(p) * part;
+  const rec = {
+    ...p,
+    id: uid(),
+    parentId: p.id, // 同源標記：同一原始部位的分筆不重複計入連敗
+    size: part,
+    riskAmount: partRisk,
+    riskPct: +partPct.toFixed(4), // 風險 % 同步按比例縮放（否則明細金額與 % 互相矛盾）
+    status: 'closed',
+    exitPrice,
+    exitReason,
+    exitTime,
+    exitNote: `${exitNote ? exitNote + ' ' : ''}（部分平倉 ${Math.round(frac * 100)}%）`,
+    pnl,
+    pnlPts,
+    rMultiple: partRisk > 0 ? pnl / partRisk : 0,
+  };
+  state.trades.unshift(rec);
+  p.size -= part;
+  p.riskAmount -= partRisk;
+  p.riskPct = +(p.riskPct - partPct).toFixed(4);
+  saveStorage();
+}
+function confirmManualClose() {
+  const p = state.positions.find((x) => x.id === _closeTargetId);
+  const c = state.candles[state.cursorIndex];
+  // 部位可能在視窗開著時已被停損/停利平掉——關窗並說明，不要靜默無反應
+  if (!p || p.status !== 'open') {
+    $('close-modal').classList.remove('show');
+    _closeTargetId = null;
+    showToast('這個部位已經不在了（可能已觸價出場）', 'error');
+    return;
+  }
+  // 視窗開著時被切到別的標的/週期：現在的 K 棒屬於另一個商品，
+  // 用它平倉會寫出價格與時間都錯亂的假交易，直接擋下
+  if (p.symbol !== state.symbol || p.timeframe !== state.timeframe) {
+    $('close-modal').classList.remove('show');
+    _closeTargetId = null;
+    showToast(`已切換標的，請切回 ${symLabel(p.symbol)} ${p.timeframe} 再平倉`, 'error');
+    return;
+  }
+  if (!c) return;
+  const reason = $('close-reason').value;
+  const note = $('close-note').value.trim();
+  if (_closeFrac < 0.999) closePartialPosition(p, _closeFrac, c.close, reason, c.time, note);
+  else closePosition(p, c.close, reason, c.time, note);
+  $('close-modal').classList.remove('show');
+  _closeTargetId = null;
+  renderPositions();
+  renderTrades();
+  renderReport();
+  updateHotStats();
+  redrawPositionLines();
+  showToast(
+    _closeFrac < 0.999 ? `✓ 已部分平倉 ${Math.round(_closeFrac * 100)}%，剩餘續抱` : '✓ 已平倉',
+    'success',
+  );
+  if (!checkBlowUp()) checkLossStreak(); // 爆倉優先：已經出局就不必再提醒連敗
+}
+
+function closePosition(p, exitPrice, exitReason, exitTime, exitNote) {
+  p.status = 'closed';
+  p.exitPrice = exitPrice;
+  p.exitReason = exitReason;
+  p.exitTime = exitTime;
+  p.exitNote = exitNote || '';
+  const dir = p.side === 'long' ? 1 : -1;
+  const pnlPts = (exitPrice - p.entryPrice) * dir;
+  const pnl = pnlPts * posPV(p) * p.size;
+  p.pnl = pnl;
+  p.pnlPts = pnlPts;
+  // R = 盈虧 ÷ 進場時風險金額（停損未設或事後拖動都算得出正確 R）
+  const dist = p.stopLoss != null ? Math.abs(p.entryPrice - p.stopLoss) : 0;
+  p.rMultiple = p.riskAmount > 0 ? pnl / p.riskAmount : dist > 0 ? pnlPts / dist : 0;
+  p.holdBars = null; // computed if needed
+  // move from positions to trades
+  state.positions = state.positions.filter((x) => x.id !== p.id);
+  state.trades.unshift(p);
+  saveStorage();
+}
+
+// ---------- 連敗熔斷 ----------
+// 目前 scope（盲測輪內 / 自由模式）最近的連續虧損筆數
+// 已通知過的連敗數，依 scope 分開記（盲測輪與自由模式各自獨立，不互相汙染）
+let _fuseNotified = {};
+function fuseScopeKey() {
+  return state.blind ? state.blind.id : 'free';
+}
+function currentLossStreak() {
+  const list = state.blind
+    ? state.trades.filter((t) => t.blindId === state.blind.id)
+    : state.trades.filter((t) => !t.blindId);
+  // 同一原始部位的分批出場算「一筆」——分三段停損不該被當成連虧三次
+  // 用 Set 而非比對前一筆：分批中間被其他部位的平倉插隊時也要正確合併
+  const seen = new Set();
+  for (const t of list) {
+    // unshift 存入 → index 0 = 最新
+    if ((t.pnl || 0) >= 0) break;
+    seen.add(t.parentId || t.id);
+  }
+  return seen.size;
+}
+// 連虧 3/5/7 筆時暫停回放並跳提醒；贏一筆歸零
+function checkLossStreak() {
+  const n = currentLossStreak();
+  const key = fuseScopeKey();
+  if (n < 3) {
+    delete _fuseNotified[key];
+    return;
+  }
+  if ((n === 3 || n === 5 || n === 7) && _fuseNotified[key] !== n) {
+    _fuseNotified[key] = n;
+    stopPlay();
+    $('fuse-body').innerHTML =
+      `你已經<strong style="color:var(--danger-2);">連續虧損 ${n} 筆</strong>——先停一下。`;
+    $('fuse-modal').classList.add('show');
+  }
+}
+
+// ---------- 餘額歸零強制出局（爆倉） ----------
+// 已宣告出局的 scope，依 fuseScopeKey() 分開記（比照 _fuseNotified，盲測輪與自由模式互不汙染）
+let _blownUp = {};
+// 「這輪曾經有錢」：權益是全域的（起始資金 + 全部已實現），一輪把錢燒光之後，
+// 下一輪開場的權益還是負的。少了這個閂，每開一輪新盲測都會在第一根 K 棒被判出局。
+// 所以只在「看過 > 0 才跌到 <= 0」時宣告；權益重新回正才重新上膛。
+let _blowUpArmed = false;
+function checkBlowUp() {
+  const key = fuseScopeKey();
+  if (_blownUp[key]) return false;
+  const eq = currentEquity();
+  // NaN 不是 <= 0：算不出權益（資料壞掉、部位欄位缺值）時寧可不判，
+  // 否則會用一個「畫面顯示 —」的數字把使用者判出局，怎麼解釋都解釋不通
+  if (!Number.isFinite(eq.total)) return false;
+  if (eq.total > 0) {
+    _blowUpArmed = true;
+    return false;
+  }
+  if (!_blowUpArmed) return false; // 開場就是負的 → 是上一輪的殘值，不重複宣告
+  _blownUp[key] = true;
+  _blowUpArmed = false;
+  stopPlay();
+  const b = state.blind;
+  const c = state.candles[state.cursorIndex];
+  let closed = 0,
+    cancelled = 0,
+    others = 0;
+  if (b) {
+    // 盲測：finishBlindSession 本來就會取消掛單、把未平倉部位以現價平掉，
+    // 自己再平一次會重複寫紀錄，所以這裡只數數字給提示用，實際結算交給它
+    const scoped = state.positions.filter((p) => p.blindId === b.id);
+    closed = scoped.filter((p) => p.status === 'open').length;
+    cancelled = scoped.filter((p) => p.status === 'pending').length;
+  } else {
+    // 自由模式沒有盲測輪可結算，自己清場；一樣不碰其他標的／週期（假交易問題同 closeAllPositions）
+    const here = (p) => p.symbol === state.symbol && p.timeframe === state.timeframe;
+    const scoped = state.positions.filter(
+      (p) => (p.status === 'open' || p.status === 'pending') && inScope(p),
+    );
+    others = scoped.filter((p) => !here(p)).length;
+    const opens = scoped.filter((p) => p.status === 'open' && here(p));
+    const dropIds = new Set(
+      scoped.filter((p) => p.status === 'pending' && here(p)).map((p) => p.id),
+    );
+    closed = opens.length;
+    cancelled = dropIds.size;
+    if (c)
+      for (const p of opens) closePosition(p, c.close, '爆倉強制平倉', c.time, '餘額歸零強制出局');
+    if (dropIds.size) state.positions = state.positions.filter((x) => !dropIds.has(x.id));
+  }
+  if (_closeTargetId) {
+    // 部位已被清掉，開著的平倉視窗會變成死視窗
+    $('close-modal').classList.remove('show');
+    _closeTargetId = null;
+  }
+  if (b) {
+    finishBlindSession('爆倉出局', { blownUp: true }); // 內含清場、揭曉、寫入 blindHistory
+  } else {
+    saveStorage();
+    renderPositions();
+    renderTrades();
+    renderReport();
+    updateHotStats();
+    redrawPositionLines();
+  }
+  // 數字在清場之後才取：浮虧這時已經變成已實現，
+  // 否則會出現「餘額 -1 元、起始 10 萬、已實現 0」這種怎麼加都對不起來的三個數字
+  const eqAfter = currentEquity();
+  $('blowup-body').innerHTML =
+    `你的<strong>餘額只剩 ${escHtml(fmtMoney(eqAfter.total))}</strong>——<strong style="color:var(--danger-2);">錢輸光了，本輪結束</strong>。<br>` +
+    `起始資金 ${escHtml(fmtMoney(eqAfter.balance))}，已實現盈虧 ${escHtml(fmtMoney(eqAfter.realized))}。<br>` +
+    `已強制平掉 ${closed} 筆持倉、取消 ${cancelled} 張掛單。` +
+    (others ? `<br>另有 ${others} 筆在其他標的，切換過去才能處理。` : '');
+  $('fuse-modal').classList.remove('show'); // 爆倉的優先級高於連敗提醒，不要兩個視窗疊著
+  $('blowup-modal').classList.add('show');
+  return true;
+}
+
+// ---------- Trade list ----------
+function renderTrades() {
+  const cont = $('trades-list');
+  // 盲測中只列本輪盲測交易（且遮罩名稱），平時列全部
+  const list = state.blind
+    ? state.trades.filter((t) => t.blindId === state.blind.id)
+    : state.trades;
+  if (!list.length) {
+    cont.innerHTML = state.blind
+      ? '<div class="empty">本輪盲測尚無平倉紀錄</div>'
+      : '<div class="empty">尚無已平倉交易紀錄</div>';
+    return;
+  }
+  cont.innerHTML = list
+    .map(
+      (t) => `
+    <div class="trade-row ${t.side}" data-trade="${t.id}">
+<div class="top">
+  <span class="sym">${dispSym(t)} ${t.side === 'long' ? '多' : '空'} · ${t.timeframe}</span>
+  <span class="pnl ${t.pnl >= 0 ? 'pnl-pos' : 'pnl-neg'}" style="color:${t.pnl >= 0 ? 'var(--accent-2)' : 'var(--danger-2)'}">${fmtMoney(t.pnl)} ${fmtR(t.rMultiple)}</span>
+</div>
+<div class="meta">
+  <span>${escHtml(t.strategyTag)} → ${escHtml(t.exitReason)}</span>
+  <span>${isMasked(t) ? '❓' : fmtDateTime(t.entryTime, t.timeframe)}</span>
+</div>
+    </div>
+  `,
+    )
+    .join('');
+  cont
+    .querySelectorAll('[data-trade]')
+    .forEach((r) => r.addEventListener('click', () => openTradeModal(r.dataset.trade)));
+}
+
+function openTradeModal(id) {
+  const t = state.trades.find((x) => x.id === id);
+  if (!t) return;
+  $('trade-modal-body').innerHTML = `
+    <div style="font-size:13px;line-height:1.8;">
+<div><strong>${dispSym(t)} ${t.side === 'long' ? '多單' : '空單'} · ${t.timeframe}</strong></div>
+<div style="color:var(--text-3);">${isMasked(t) ? '❓ 盲測中日期隱藏' : fmtDateTime(t.entryTime, t.timeframe) + ' → ' + fmtDateTime(t.exitTime, t.timeframe)}</div>
+<hr style="border-color:var(--line);margin:10px 0;">
+<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:12px;">
+  <span style="color:var(--text-3);">進場</span><span>${fmtPrice(t.entryPrice)}</span>
+  <span style="color:var(--text-3);">停損 / 停利</span><span>${t.stopLoss != null ? fmtPrice(t.stopLoss) : '—'} / ${t.takeProfit != null ? fmtPrice(t.takeProfit) : '—'}</span>
+  <span style="color:var(--text-3);">出場</span><span>${fmtPrice(t.exitPrice)}</span>
+  <span style="color:var(--text-3);">部位</span><span>${sizeStr(t)}</span>
+  <span style="color:var(--text-3);">盈虧</span><span style="color:${t.pnl >= 0 ? 'var(--accent-2)' : 'var(--danger-2)'};font-weight:600;">${fmtMoney(t.pnl)} (${fmtR(t.rMultiple)})</span>
+  <span style="color:var(--text-3);">風險</span><span>${fmtMoney(t.riskAmount)} (${t.riskPct}%)</span>
+</div>
+<hr style="border-color:var(--line);margin:10px 0;">
+<div style="font-size:12px;">
+  <div style="color:var(--text-3);margin-bottom:3px;">進場策略 / 理由</div>
+  <div style="background:var(--bg-3);padding:8px 10px;border-radius:6px;">
+    <div style="font-weight:600;color:var(--accent-2);margin-bottom:3px;">${escHtml(t.strategyTag)}</div>
+    <div style="color:var(--text-2);">${escHtml(t.entryReason)}</div>
+  </div>
+</div>
+<div style="font-size:12px;margin-top:8px;">
+  <div style="color:var(--text-3);margin-bottom:3px;">出場原因 / 備註</div>
+  <div style="background:var(--bg-3);padding:8px 10px;border-radius:6px;">
+    <div style="font-weight:600;color:${t.pnl >= 0 ? 'var(--accent-2)' : 'var(--danger-2)'};margin-bottom:3px;">${escHtml(t.exitReason)}</div>
+    <div style="color:var(--text-2);">${escHtml(t.exitNote || '—')}</div>
+  </div>
+</div>
+    </div>
+  `;
+  $('trade-modal').classList.add('show');
+  $('btn-replay-trade').onclick = () => replayTrade(t.id);
+  $('btn-delete-trade').onclick = () => {
+    if (!confirm('確定刪除這筆交易紀錄？')) return;
+    state.trades = state.trades.filter((x) => x.id !== t.id);
+    saveStorage();
+    renderTrades();
+    renderReport();
+    updateHotStats();
+    $('trade-modal').classList.remove('show');
+    showToast('已刪除', 'success');
+  };
+}
+
+// ---------- 一鍵回放檢討 ----------
+// 從交易紀錄跳回進場當根 K 棒（之後的走勢隱藏），重看自己當初看到什麼
+let _reviewLines = [];
+function clearReviewLines() {
+  _reviewLines.forEach((l) => {
+    try {
+      candleSeries.removePriceLine(l);
+    } catch {}
+  });
+  _reviewLines = [];
+}
+async function replayTrade(tradeId) {
+  const t = state.trades.find((x) => x.id === tradeId);
+  if (!t) return;
+  if (state.blind) {
+    // 盲測中只能回放本輪交易（其他標的會洩題也載不了）
+    if (t.blindId !== state.blind.id) {
+      showToast('盲測進行中，只能回放本輪的交易', 'error');
+      return;
+    }
+  } else if (t.symbol !== state.symbol || t.timeframe !== state.timeframe) {
+    if (!SYMBOLS[t.symbol]) {
+      showToast('這筆交易的標的已不在清單中', 'error');
+      return;
+    }
+    state.symbol = t.symbol;
+    state.timeframe = t.timeframe;
+    syncTopbarUI();
+    await loadAndStart();
+  }
+  const idx = state.candles.findIndex((c) => c.time >= t.entryTime);
+  if (idx < 0) {
+    showToast('找不到該筆交易對應的 K 棒', 'error');
+    return;
+  }
+  stopPlay();
+  state.cursorIndex = state.blind ? Math.min(idx, state.blind.endIndex) : idx;
+  if (state.blind) state.blind.cursorIndex = state.cursorIndex; // 續玩/重整才不會跳回原位
+  saveStorage();
+  renderChart();
+  updateReplayInfo();
+  refreshOrderForm();
+  renderPositions();
+  updateHotStats();
+  clearReviewLines();
+  _reviewLines.push(
+    candleSeries.createPriceLine({
+      price: t.entryPrice,
+      color: '#b2b5be',
+      lineWidth: 1,
+      lineStyle: 3,
+      title: `📍 ${t.side === 'long' ? '多' : '空'}進場 ${fmtPrice(t.entryPrice)}`,
+    }),
+  );
+  if (t.exitPrice != null) {
+    _reviewLines.push(
+      candleSeries.createPriceLine({
+        price: t.exitPrice,
+        color: '#f7a600',
+        lineWidth: 1,
+        lineStyle: 3,
+        title: `出場 ${fmtPrice(t.exitPrice)}（${t.exitReason || ''}）`,
+      }),
+    );
+  }
+  $('trade-modal').classList.remove('show');
+  showToast('📍 已跳到進場當根——按 → 逐根重看這筆交易的發展', 'success');
+}
+
+// ---------- Report ----------
+// 盲測歷史表格（給報告頁）
+function renderBlindHistoryHTML() {
+  if (!state.blindHistory.length) return '';
+  const rows = state.blindHistory
+    .slice(0, 30)
+    .map((s) => {
+      const info = symInfo(s.symbol);
+      const wr = s.winRate == null ? '—' : s.winRate.toFixed(0) + '%';
+      return `<tr>
+<td>${fmtDateTime(Math.floor(s.finishedAt / 1000), '1d')}</td>
+<td>${s.blownUp ? '💀 ' : ''}${escHtml(info.name)}</td>
+<td class="num">${s.longs}多 / ${s.shorts}空</td>
+<td class="num">${wr}</td>
+<td class="num" style="color:${s.totalPnl >= 0 ? 'var(--accent-2)' : 'var(--danger-2)'}">${fmtMoney(s.totalPnl)}</td>
+    </tr>`;
+    })
+    .join('');
+  return `
+    <div class="crosstab">
+<h4>🎲 盲測紀錄</h4>
+<table>
+  <thead><tr><th>日期</th><th>標的</th><th class="num">多/空</th><th class="num">勝率</th><th class="num">盈虧</th></tr></thead>
+  <tbody>${rows}</tbody>
+</table>
+    </div>`;
+}
+
+function renderReport() {
+  const cont = $('report-content');
+  // 與交易列表同口徑：盲測中只統計本輪，否則報告會混入場外交易
+  const trades = state.blind
+    ? state.trades.filter((t) => t.blindId === state.blind.id)
+    : state.trades;
+  if (!trades.length) {
+    cont.innerHTML =
+      renderBlindHistoryHTML() ||
+      '<div class="empty">尚無交易紀錄<br>完成幾筆模擬後彙整即會顯示</div>';
+    return;
+  }
+  const wins = trades.filter((t) => t.pnl > 0);
+  const losses = trades.filter((t) => t.pnl <= 0);
+  const winRate = (wins.length / trades.length) * 100;
+  const totalPnl = trades.reduce((s, t) => s + t.pnl, 0);
+  const avgWin = wins.length ? wins.reduce((s, t) => s + t.pnl, 0) / wins.length : 0;
+  const avgLoss = losses.length
+    ? Math.abs(losses.reduce((s, t) => s + t.pnl, 0) / losses.length)
+    : 0;
+  const rr = avgLoss > 0 ? avgWin / avgLoss : Infinity;
+  const avgR = trades.reduce((s, t) => s + (t.rMultiple || 0), 0) / trades.length;
+
+  // Max consecutive losses
+  let maxLossStreak = 0,
+    streakSet = new Set();
+  // trades are unshifted so newest first; compute over chronological order
+  // 同一原始部位的分批出場算一筆（與連敗熔斷的計數口徑一致，交錯時也正確合併）
+  const chrono = [...trades].sort((a, b) => a.exitTime - b.exitTime);
+  for (const t of chrono) {
+    if (t.pnl <= 0) {
+      streakSet.add(t.parentId || t.id);
+      maxLossStreak = Math.max(maxLossStreak, streakSet.size);
+    } else {
+      streakSet = new Set();
+    }
+  }
+
+  // strategy x exitReason crosstab
+  const strategies = [...new Set(trades.map((t) => t.strategyTag || '—'))].sort();
+  const reasons = [...new Set(trades.map((t) => t.exitReason || '—'))].sort();
+  let crosstabHTML = '';
+  if (strategies.length && reasons.length) {
+    crosstabHTML = `
+<div class="crosstab">
+  <h4>策略 × 出場原因</h4>
+  <table>
+    <thead><tr><th>策略</th>${reasons.map((r) => `<th class="num">${escHtml(r)}</th>`).join('')}<th class="num">合計</th></tr></thead>
+    <tbody>
+    ${strategies
+      .map((s) => {
+        let totalCount = 0;
+        const cells = reasons
+          .map((r) => {
+            const cnt = trades.filter((t) => t.strategyTag === s && t.exitReason === r).length;
+            totalCount += cnt;
+            return `<td class="num">${cnt || ''}</td>`;
+          })
+          .join('');
+        return `<tr><td>${escHtml(s)}</td>${cells}<td class="num"><strong>${totalCount}</strong></td></tr>`;
+      })
+      .join('')}
+    </tbody>
+  </table>
+</div>
+    `;
+  }
+
+  cont.innerHTML = `
+    <div class="stat-grid">
+<div class="stat-card"><div class="label">總交易數</div><div class="value">${trades.length}</div></div>
+<div class="stat-card ${winRate >= 50 ? 'win' : 'lose'}"><div class="label">勝率</div><div class="value">${winRate.toFixed(1)}%</div></div>
+<div class="stat-card ${totalPnl >= 0 ? 'win' : 'lose'}"><div class="label">總盈虧</div><div class="value">${fmtMoney(totalPnl)}</div></div>
+<div class="stat-card ${rr >= 1 ? 'win' : 'lose'}"><div class="label">盈虧比 R:R</div><div class="value">${isFinite(rr) ? '1:' + rr.toFixed(2) : '∞'}</div></div>
+<div class="stat-card"><div class="label">平均賺</div><div class="value" style="color:var(--accent-2);">${fmtMoney(avgWin)}</div></div>
+<div class="stat-card"><div class="label">平均賠</div><div class="value" style="color:var(--danger-2);">${fmtMoney(avgLoss)}</div></div>
+<div class="stat-card ${avgR >= 0 ? 'win' : 'lose'}"><div class="label">平均 R 倍數</div><div class="value">${fmtR(avgR)}</div></div>
+<div class="stat-card lose"><div class="label">最大連虧</div><div class="value">${maxLossStreak}</div></div>
+    </div>
+    ${crosstabHTML}
+    ${renderBlindHistoryHTML()}
+    ${buildInsightHTML(trades)}
+  `;
+}
+
+// 依實際交易資料生成觀察（原本是寫死的範例文字，會給出與事實相反的診斷）
+function buildInsightHTML(trades) {
+  if (trades.length < 5) {
+    return '<div class="field-hint" style="margin-top:10px;">💡 累積 5 筆以上交易後，這裡會依你的實際紀錄整理觀察重點。</div>';
+  }
+  const notes = [];
+  const count = (fn) => trades.filter(fn).length;
+  const wins = trades.filter((t) => t.pnl > 0),
+    losses = trades.filter((t) => t.pnl <= 0);
+  // 1) 拗單檢查：平均虧損持有時間 vs 平均獲利持有時間
+  const holdBars = (t) =>
+    t.exitTime != null && t.entryTime != null && t.exitTime > t.entryTime
+      ? t.exitTime - t.entryTime
+      : 0;
+  const avgHold = (arr) => (arr.length ? arr.reduce((s, t) => s + holdBars(t), 0) / arr.length : 0);
+  const hw = avgHold(wins),
+    hl = avgHold(losses);
+  if (hw > 0 && hl > hw * 1.3) {
+    notes.push(
+      '虧損單的平均持有時間比獲利單長，是典型的「賠錢拗、賺錢跑」——檢查是不是捨不得認賠。',
+    );
+  } else if (hw > 0 && hw > hl * 1.3) {
+    notes.push('獲利單抱得比虧損單久，抱單紀律良好，繼續保持。');
+  }
+  // 2) 提前出場 vs 讓停損停利執行
+  const early = count((t) => /提前|不耐|扛單/.test(t.exitReason || ''));
+  if (early / trades.length > 0.5) {
+    notes.push(
+      `${Math.round((early / trades.length) * 100)}% 的交易是提前手動出場，代表進場後常改變主意——回頭看這些單，如果不動會更好還是更糟？`,
+    );
+  }
+  // 3) 停利距離：達停損多但達停利少
+  const hitSl = count((t) => t.exitReason === '達停損'),
+    hitTp = count((t) => t.exitReason === '達停利');
+  if (hitSl >= 3 && hitTp === 0) {
+    notes.push('停損被打到多次、停利一次都沒到，停利可能設得太遠，或進場點常在反轉前。');
+  }
+  // 4) 最高頻的策略 × 出場原因組合
+  const combo = {};
+  for (const t of trades) {
+    const k = `${t.strategyTag || '—'}｜${t.exitReason || '—'}`;
+    combo[k] = (combo[k] || 0) + 1;
+  }
+  const top = Object.entries(combo).sort((a, b) => b[1] - a[1])[0];
+  if (top && top[1] >= 3 && !top[0].startsWith('—')) {
+    const [tag, reason] = top[0].split('｜');
+    notes.push(
+      `最常出現的組合是策略「<strong>${escHtml(tag)}</strong>」→「<strong>${escHtml(reason)}</strong>」（${top[1]} 次），值得和教練一起看這組的決策過程。`,
+    );
+  }
+  // 5) 風險一致性
+  // 以母單聚合再比對：分批出場會把一個 1% 決策拆成多筆小數 riskPct，
+  // 逐筆去重會把最自律的學員誤判成「風險設定亂改」
+  const riskByOrder = {};
+  for (const t of trades) {
+    const g = t.parentId || t.id;
+    riskByOrder[g] = (riskByOrder[g] || 0) + (t.riskPct || 0);
+  }
+  const pcts = [...new Set(Object.values(riskByOrder).map((v) => Math.round(v * 100) / 100))];
+  if (pcts.length > 3) {
+    notes.push(
+      `每筆風險 % 用了 ${pcts.length} 種不同設定，部位大小不一致會讓勝率與期望值失真——固定風險比例是統計有效的前提。`,
+    );
+  }
+  if (!notes.length) notes.push('目前沒有明顯的行為偏誤訊號，繼續累積樣本數。');
+  return (
+    `<div class="field-hint" style="margin-top:10px;">💡 依你這 ${trades.length} 筆紀錄整理的觀察：<br>` +
+    notes.map((n) => `· ${n}`).join('<br>') +
+    '</div>'
+  );
+}
+
+// ---------- Hot stats ----------
+// 帳戶權益的唯一算法：起始資金 + 已實現 + 未實現
+// 抽出來是因為爆倉判定要用它：判定出局的數字必須跟畫面右上角那個「餘額」是同一個來源，
+// 否則會出現「畫面明明還有錢卻被判出局」這種無法對使用者解釋的狀況
+function currentEquity() {
+  const balance = state.settings.balance;
+  const realized = state.trades.reduce((s, t) => s + (t.pnl || 0), 0);
+  const c = state.candles[state.cursorIndex];
+  let unreal = 0;
+  if (c) {
+    for (const p of state.positions) {
+      if (p.status !== 'open') continue;
+      if (p.symbol !== state.symbol || p.timeframe !== state.timeframe || !inScope(p)) continue;
+      const dir = p.side === 'long' ? 1 : -1;
+      unreal += (c.close - p.entryPrice) * dir * posPV(p) * p.size;
+    }
+  }
+  return { balance, realized, unreal, total: balance + realized + unreal };
+}
+
+function updateHotStats() {
+  const { realized, unreal, total } = currentEquity();
+  // 畫面上顯示過有錢，爆倉判定才上膛（見 _blowUpArmed）——包含重整後第一次繪製，
+  // 否則帶著浮虧部位重整進來、下一根就歸零的情境會漏判
+  if (Number.isFinite(total) && total > 0) _blowUpArmed = true;
+  $('hs-balance').textContent = fmtMoney(total);
+  $('hs-realized').textContent = fmtMoney(realized);
+  $('hs-realized').style.color = realized >= 0 ? 'var(--accent-2)' : 'var(--danger-2)';
+  $('hs-unrealized').textContent = unreal !== 0 ? fmtMoney(unreal) : '—';
+  $('hs-unrealized').style.color = unreal >= 0 ? 'var(--accent-2)' : 'var(--danger-2)';
+}
+
+// ---------- Side tabs ----------
+function switchSidePane(name) {
+  $$('.side-tabs button').forEach((b) => b.classList.toggle('active', b.dataset.pane === name));
+  $$('.side-pane').forEach((p) => p.classList.toggle('active', p.dataset.pane === name));
+  if (name === 'trades') renderTrades();
+  if (name === 'report') renderReport();
+  if (name === 'positions') renderPositions();
+}
+
+// ---------- Auth + Firestore sync ----------
+function showLogin() {
+  $('login-overlay').style.display = 'flex';
+  $('app').classList.remove('ready');
+}
+function hideLogin() {
+  $('login-overlay').style.display = 'none';
+  $('app').classList.add('ready');
+}
+
+function setUser(u) {
+  state.user = u;
+  if (u) {
+    $('user-chip').style.display = 'flex';
+    $('user-avatar').src =
+      u.photoURL ||
+      'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"%3E%3Ccircle cx="12" cy="12" r="12" fill="%231f2937"/%3E%3Ctext x="12" y="16" text-anchor="middle" font-size="12" fill="%2394a3b8"%3E?%3C/text%3E%3C/svg%3E';
+    $('user-name').textContent = u.name || u.email || '—';
+  } else {
+    $('user-chip').style.display = 'none';
+  }
+}
+
+// 會員資格判定：與方舟主站 fetchMembershipOnce 同一套規則
+// （members.tier ∈ 付費方案 且 expires_at 未過期，或 admin_users 有列）
+const PAID_TIERS = ['starter', 'vip', 'pro', 'private'];
+async function fetchMembership(email, uid) {
+  if (!window.sb) return { ok: false, error: 'Supabase 尚未載入' };
+  try {
+    const [memberRes, adminRes] = await Promise.all([
+      window.sb
+        .from('members')
+        .select('tier, expires_at')
+        .eq('email', email.toLowerCase())
+        .maybeSingle(),
+      window.sb.from('admin_users').select('role').eq('user_id', uid).maybeSingle(),
+    ]);
+    // 查詢錯誤 ≠ 非會員：網路閃斷不能把付費會員擋在門外
+    if (memberRes.error) return { ok: false, error: memberRes.error.message };
+    if (adminRes.error) return { ok: false, error: adminRes.error.message };
+    const isAdmin = !!adminRes.data;
+    let paid = false;
+    if (memberRes.data) {
+      const exp = memberRes.data.expires_at;
+      if (!exp || new Date(exp).getTime() >= Date.now()) {
+        paid = PAID_TIERS.includes(memberRes.data.tier);
+      }
+    }
+    return { ok: true, allowed: isAdmin || paid, isAdmin };
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) };
+  }
+}
+
+// Load full user state from Supabase (tradersim_states.state), overlay onto local
+async function loadFromCloud(uid) {
+  if (!window.sb) return false;
+  try {
+    const { data, error } = await window.sb
+      .from('tradersim_states')
+      .select('state')
+      .eq('user_id', uid)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data || !data.state) return false;
+    const s = data.state;
+    if (Array.isArray(s.trades)) state.trades = s.trades;
+    if (Array.isArray(s.positions)) state.positions = s.positions;
+    if (s.settings) Object.assign(state.settings, s.settings);
+    if (s.drawings && typeof s.drawings === 'object') state.drawings = s.drawings;
+    if (s.indicators) mergeIndicators(s.indicators);
+    if (s.drawTemplates && typeof s.drawTemplates === 'object')
+      state.drawTemplates = s.drawTemplates;
+    if (s.activeTplId) Object.assign(state.activeTplId, s.activeTplId);
+    fillMissingTemplateTypes();
+    if (s.blind) {
+      if (Array.isArray(s.blind.history)) state.blindHistory = s.blind.history;
+      state.blind = s.blind.active || null;
+    }
+    return true;
+  } catch (e) {
+    console.warn('load from cloud failed:', e);
+    return false;
+  }
+}
+
+// 給方舟後台列表用的績效摘要（存檔當下算好，admin 不拆大 jsonb）
+function makeSummary() {
+  const t = state.trades;
+  const wins = t.filter((x) => x.pnl > 0).length;
+  return {
+    trades: t.length,
+    wins,
+    winRate: t.length ? +((wins / t.length) * 100).toFixed(1) : null,
+    totalPnl: +t.reduce((s, x) => s + (x.pnl || 0), 0).toFixed(2),
+    avgR: t.length ? +(t.reduce((s, x) => s + (x.rMultiple || 0), 0) / t.length).toFixed(2) : null,
+    longs: t.filter((x) => x.side === 'long').length,
+    shorts: t.filter((x) => x.side === 'short').length,
+    openPositions: state.positions.filter((p) => p.status === 'open').length,
+    blindSessions: state.blindHistory.length,
+    balance: state.settings.balance,
+    lastTradeAt: t[0]?.exitTime ?? null,
+  };
+}
+
+// Debounced cloud save
+let _cloudSaveTimer = null;
+function queueFirestoreSave() {
+  // 名稱保留（saveStorage 呼叫點多），實作已換 Supabase
+  if (!state.user || !window.sb) return;
+  clearTimeout(_cloudSaveTimer);
+  _cloudSaveTimer = setTimeout(() => {
+    actualCloudSave().catch((e) => console.warn('cloud save failed:', e));
+  }, 1500);
+}
+async function actualCloudSave() {
+  if (!state.user || !window.sb) return;
+  const { error } = await window.sb.from('tradersim_states').upsert({
+    user_id: state.user.uid,
+    email: state.user.email,
+    display_name: state.user.name || null,
+    state: {
+      trades: state.trades,
+      positions: state.positions,
+      settings: state.settings,
+      drawings: state.drawings,
+      indicators: state.indicators,
+      drawTemplates: state.drawTemplates,
+      activeTplId: state.activeTplId,
+      blind: { active: state.blind, history: state.blindHistory },
+    },
+    summary: makeSummary(),
+    updated_at: new Date().toISOString(),
+  });
+  if (error) throw error;
+}
+
+// Login flow（方舟藍圖同一套 Supabase 帳號）
+async function doGoogleSignIn() {
+  if (!window.sb) {
+    showLoginError('系統還在載入，請稍後再試');
+    return;
+  }
+  $('login-error').classList.remove('show');
+  $('btn-google').disabled = true;
+  // 被非會員攔截過才強制跳帳號選擇器：一般會員不用多按一次，
+  // 但「用錯 Google 帳號」的人不會被 Google 靜默丟回同一個帳號
+  const opts = { redirectTo: location.origin };
+  if (getForceChooser()) opts.queryParams = { prompt: 'select_account' };
+  const { error } = await window.sb.auth.signInWithOAuth({
+    provider: 'google',
+    options: opts,
+  });
+  // 成功會整頁跳轉到 Google；只有失敗會走到這裡
+  if (error) {
+    showLoginError('登入失敗：' + error.message);
+    $('btn-google').disabled = false;
+  }
+}
+async function sendMagicLink() {
+  if (!window.sb) {
+    showLoginError('系統還在載入，請稍後再試');
+    return;
+  }
+  const email = $('login-email').value.trim();
+  if (!email || !email.includes('@')) {
+    showLoginError('請輸入正確的 Email');
+    return;
+  }
+  $('login-error').classList.remove('show');
+  $('btn-magiclink').disabled = true;
+  $('btn-magiclink').textContent = '寄送中…';
+  const { error } = await window.sb.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: location.origin },
+  });
+  if (error) {
+    showLoginError('寄送失敗：' + error.message);
+    $('btn-magiclink').disabled = false;
+    $('btn-magiclink').textContent = '寄送登入連結';
+  } else {
+    $('btn-magiclink').textContent = '✓ 已寄出，請到信箱點連結';
+  }
+}
+// 非會員攔截：不是丟一行紅字就算了，導去 Skool 付費頁
+const PLANS_URL = 'https://www.skool.com/blue-print/about';
+const CHOOSER_KEY = 'tradersim.forceChooser';
+let _signOutPromise = null;
+
+// 「下次 Google 登入強制跳帳號選擇器」的旗標。放 sessionStorage 而不是記憶體：
+// 攔截卡本身就會把人整頁送去 Skool，記憶體變數活不過那一趟，
+// 使用者按上一頁回來又會被 Google 靜默丟回同一個錯帳號，原地打轉。
+function setForceChooser(on) {
+  try {
+    on ? sessionStorage.setItem(CHOOSER_KEY, '1') : sessionStorage.removeItem(CHOOSER_KEY);
+  } catch {}
+}
+function getForceChooser() {
+  try {
+    return sessionStorage.getItem(CHOOSER_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function showNotMember(email) {
+  // overlay 可能已被 hideLogin() 藏起來（App 正在用，另一個帳號的 auth 事件飄進來），
+  // 不先叫出來攔截卡會顯示在看不見的地方。
+  showLogin();
+  setForceChooser(true);
+  $('nomember-email').textContent = email || '（未取得 Email）';
+  $('login-error').classList.remove('show');
+  $('login-card').style.display = 'none';
+  $('nomember-card').style.display = 'block';
+  // 不自動倒數跳轉：自動跳走過去出過「隱形倒數把人踢走」「跨分頁踢走已
+  // 登入會員」兩個嚴重 bug，改成使用者自己按「去加入會員」才離開。
+  $('nomember-count').textContent = '';
+}
+async function goPlans() {
+  $('nomember-count').textContent = '前往中…';
+  // 登出是非同步的（先打 /logout 再清 localStorage）。導頁若搶在它前面，
+  // token 會殘留，使用者回來又被自動攔截一次。等它，但最多等 600ms。
+  if (_signOutPromise) {
+    try {
+      await Promise.race([_signOutPromise, new Promise((r) => setTimeout(r, 600))]);
+    } catch {}
+  }
+  location.href = PLANS_URL;
+}
+function backToLogin() {
+  $('nomember-count').textContent = '';
+  $('nomember-card').style.display = 'none';
+  $('login-card').style.display = 'block';
+  $('btn-google').disabled = false;
+  // magic link 按鈕成功後會停在 disabled 的「✓ 已寄出」，回到登入卡若不還原，
+  // 使用者沒辦法改用另一個 Email 重寄，畫面還在說信寄出去了
+  $('btn-magiclink').disabled = false;
+  $('btn-magiclink').textContent = '寄送登入連結';
+}
+function showLoginError(msg) {
+  const errEl = $('login-error');
+  errEl.textContent = msg;
+  errEl.classList.add('show');
+}
+async function doSignOut() {
+  if (window.sb) {
+    try {
+      await window.sb.auth.signOut();
+    } catch {}
+  }
+  state.user = null;
+  setUser(null);
+  location.reload();
+}
+
+let _appBooted = false;
+let _handledUid = null;
+async function handleAuthSuccess(sbUser) {
+  if (_handledUid === sbUser.id) return; // token refresh 等事件重複觸發時跳過
+  _handledUid = sbUser.id;
+  // 沒有 email 就無從比對訂閱（fetchMembership 會在 email.toLowerCase() 直接 throw，
+  // 被吃成「連線異常」把 TypeError 噴到畫面上）。當成非會員擋下才是對的。
+  if (!sbUser.email) {
+    _handledUid = null;
+    showNotMember('');
+    _signOutPromise = window.sb.auth.signOut().catch(() => {});
+    return;
+  }
+  // 會員資格檢查（= 白名單同步方舟訂閱會員）
+  const m = await fetchMembership(sbUser.email, sbUser.id);
+  if (!m.ok) {
+    _handledUid = null;
+    backToLogin();
+    showLoginError('連線異常，請重新整理再試（' + m.error + '）');
+    return;
+  }
+  if (!m.allowed) {
+    _handledUid = null;
+    showNotMember(sbUser.email);
+    // 不 await：登出走網路，不能讓攔截畫面卡在轉圈。goPlans() 會在導頁前補等一下。
+    _signOutPromise = window.sb.auth.signOut().catch(() => {});
+    return;
+  }
+  // 走到這裡＝有效會員。若這一輪曾顯示過攔截卡（例如跨分頁先被錯帳號擋過），
+  // 先把兩張卡還原，之後 overlay 再顯示時才不會是一張空白/錯誤的卡。
+  backToLogin();
+  setForceChooser(false);
+  const meta = sbUser.user_metadata || {};
+  setUser({
+    uid: sbUser.id,
+    email: sbUser.email,
+    name: meta.name || meta.full_name || (sbUser.email ? sbUser.email.split('@')[0] : '會員'),
+    photoURL: meta.avatar_url || meta.picture || null,
+    isAdmin: m.isAdmin,
+  });
+  // Pull cloud data (if any) — overlays onto local
+  await loadFromCloud(sbUser.id);
+  // Persist merged state to localStorage too（也會 queue 一次雲端存檔：本地舊資料自動上雲）
+  saveStorage();
+  hideLogin();
+  if (!_appBooted) {
+    await bootApp();
+    _appBooted = true;
+  } else if (state.blind && SYMBOLS[state.blind.symbol]) {
+    // 雲端還原了進行中的盲測
+    await enterBlindReplay();
+  } else {
+    // Re-render
+    if (state.candles?.length) renderChart();
+    renderPositions();
+    renderTrades();
+    renderReport();
+    updateHotStats();
+  }
+}
+
+function setupAuthListener() {
+  if (!window.sb) return;
+  window.sb.auth.onAuthStateChange((event, session) => {
+    if (session && session.user) {
+      // 歸屬上報早於會員檢查：非會員新註冊者也要留下歸屬，他日後付費時
+      // 推薦人才算數。fire-and-forget，不擋登入。
+      if (window.arkReportReferral) window.arkReportReferral();
+      // 登入成功 / 頁面重整已有 session / magic link 回跳 — 都走會員檢查 + 載入
+      handleAuthSuccess(session.user);
+    }
+  });
+  // onAuthStateChange 對既有 session 會發 INITIAL_SESSION，上面已涵蓋
+}
+
+// ---------- Settings actions ----------
+function saveSettingsAction() {
+  const b = +$('set-balance').value;
+  if (!b || b < 1000) {
+    showToast('餘額至少 1000', 'error');
+    return;
+  }
+  state.settings.balance = b;
+  saveStorage();
+  updateOrderSummary();
+  updateHotStats();
+  showToast('已儲存', 'success');
+}
+function exportJson() {
+  // 盲測進行中：匯出檔要遮掉本輪的標的與日期，否則等於直接看答案
+  // 盲測進行中的紀錄：除了標的與時間，pv（點值快照）也要遮——
+  // pv = 原始點值 ÷ scale，洩漏它等於洩漏正規化倍率，可直接反推真實價位
+  const mask = (x) =>
+    state.blind && x.blindId === state.blind.id
+      ? {
+          ...x,
+          symbol: '❓盲測進行中',
+          entryTime: null,
+          exitTime: null,
+          chartTime: null,
+          createdBarTime: null,
+          pv: null,
+        }
+      : x;
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    user: state.user ? { name: state.user.name, email: state.user.email } : { name: '訪客' },
+    settings: state.settings,
+    openPositions: state.positions.map(mask),
+    closedTrades: state.trades.map(mask),
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `練功房_${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('已下載 JSON', 'success');
+}
+function clearAll() {
+  if (!confirm('確定清除所有模擬紀錄？此動作無法復原。')) return;
+  state.trades = [];
+  state.positions = [];
+  saveStorage();
+  renderPositions();
+  renderTrades();
+  renderReport();
+  updateHotStats();
+  redrawPositionLines();
+  showToast('已清除全部', 'success');
+}
+
+// ============================================================
+// 盲測模式（隨機標的、隱藏名稱與日期、價格正規化）
+// ============================================================
+const BLIND_CONTEXT_BARS = 60; // 起始點前至少保留的歷史根數
+const BLIND_BASE_PRICE = 100; // 正規化後的起始價
+
+function blindPool(cats, tf) {
+  return Object.values(SYMBOLS).filter((s) => cats.includes(s.category) && s.tfs.includes(tf));
+}
+
+function getBlindSetupOpts() {
+  const cats = [...$$('#blind-cats input:checked')].map((c) => c.value);
+  const tf = $('blind-tf').value;
+  const playBars = +$('blind-len').value;
+  return { cats, tf, playBars };
+}
+
+function updateBlindPoolHint() {
+  const { cats, tf } = getBlindSetupOpts();
+  const pool = blindPool(cats, tf);
+  // 列出各類別檔數，讓使用者清楚知道會從哪些類別抽（只會抽有勾選的）
+  const parts = ['futures', 'crypto', 'us', 'tw']
+    .filter((c) => cats.includes(c))
+    .map((c) => ({ c, n: pool.filter((s) => s.category === c).length }))
+    .filter((x) => x.n > 0)
+    .map((x) => `${CATEGORY_LABELS[x.c] || x.c} ${x.n}`)
+    .join('・');
+  $('blind-pool-hint').textContent = pool.length
+    ? `隨機池 ${pool.length} 檔（${parts}）— 只會從打勾的類別抽 1 檔`
+    : '⚠️ 沒有符合條件的標的（1 小時僅期指與 BTC/ETH/SOL 有資料）';
+}
+
+function openBlindSetup() {
+  if (state.blind) {
+    showToast('盲測已在進行中', 'error');
+    return;
+  }
+  $('blind-setup-modal').classList.add('show');
+  updateBlindPoolHint();
+}
+
+async function startBlindSession() {
+  const { cats, tf, playBars } = getBlindSetupOpts();
+  if (!cats.length) {
+    showToast('請至少勾選一個類別', 'error');
+    return;
+  }
+  const pool = blindPool(cats, tf);
+  if (!pool.length) {
+    showToast('沒有符合條件的標的', 'error');
+    return;
+  }
+  stopPlay();
+  // 隨機抽標的；資料長度不足的換下一檔
+  const shuffled = [...pool].sort(() => Math.random() - 0.5);
+  let picked = null,
+    candles = null;
+  for (const s of shuffled) {
+    const c = await loadCandles(s.key, tf);
+    if (c.length >= BLIND_CONTEXT_BARS + playBars + 10) {
+      picked = s;
+      candles = c;
+      break;
+    }
+  }
+  if (!picked) {
+    showToast('標的資料長度不足，請縮短測驗長度', 'error');
+    return;
+  }
+  const maxStart = candles.length - playBars - 1;
+  const startIndex =
+    BLIND_CONTEXT_BARS + Math.floor(Math.random() * (maxStart - BLIND_CONTEXT_BARS + 1));
+  state.blind = {
+    id: uid(),
+    symbol: picked.key,
+    timeframe: tf,
+    scale: BLIND_BASE_PRICE / candles[startIndex].close,
+    startIndex,
+    endIndex: startIndex + playBars,
+    cursorIndex: startIndex,
+    playBars,
+    startedAt: Date.now(),
+  };
+  $('blind-setup-modal').classList.remove('show');
+  saveStorage();
+  await enterBlindReplay();
+  showToast('🎲 盲測開始！標的與日期已隱藏', 'success');
+}
+
+// 依 state.blind 進入盲測回放（新開始與載入續玩共用）
+async function enterBlindReplay() {
+  const b = state.blind;
+  stopPlay();
+  if (typeof clearReviewLines === 'function') clearReviewLines();
+  resetPendingPoints();
+  state.posTool = null;
+  updatePosToolButtons();
+  const raw = await loadCandles(b.symbol, b.timeframe);
+  if (!raw.length) {
+    showToast('盲測資料載入失敗，已取消本輪', 'error');
+    state.blind = null;
+    saveStorage();
+    syncTopbarUI();
+    await loadAndStart();
+    return;
+  }
+  state.symbol = b.symbol;
+  state.timeframe = b.timeframe;
+  // 價格正規化：起始價 = 100，避免從價位認出標的（點值同步換算，金額不受影響）
+  // 成交量也同步正規化（起始前 60 根平均 ≈ 100）：量級差 3~4 個數量級會洩漏資產類別
+  // （台股動輒千萬股、BTC 只有幾萬顆）；等比縮放不改變形態，VWAP/OBV 等比例型指標不受影響
+  const vFrom = Math.max(0, b.startIndex - BLIND_CONTEXT_BARS);
+  const vSlice = raw.slice(vFrom, b.startIndex + 1);
+  const vAvg = vSlice.reduce((s, c) => s + (c.volume || 0), 0) / (vSlice.length || 1);
+  const vScale = vAvg > 0 ? 100 / vAvg : 1;
+  state.candles = raw.map((c) => ({
+    time: c.time,
+    open: c.open * b.scale,
+    high: c.high * b.scale,
+    low: c.low * b.scale,
+    close: c.close * b.scale,
+    volume: (c.volume || 0) * vScale,
+  }));
+  state.cursorIndex = Math.min(b.cursorIndex ?? b.startIndex, b.endIndex);
+  applyPriceFormat();
+  chart.timeScale().applyOptions({ visible: false }); // 日期隱藏
+  syncTopbarUI();
+  renderChart();
+  updateReplayInfo();
+  clearOrderTouched();
+  refreshOrderForm();
+  renderPositions();
+  renderTrades();
+  renderReport();
+  updateHotStats();
+}
+
+// 結束按鈕：無交易可直接放棄，有交易則結算揭曉
+function requestEndBlind() {
+  if (!state.blind) return;
+  const hasTrades = state.trades.some((t) => t.blindId === state.blind.id);
+  const hasOpen = state.positions.some((p) => p.status === 'open' && p.blindId === state.blind.id);
+  if (!hasTrades && !hasOpen) {
+    if (confirm('這輪還沒有任何交易，要放棄盲測嗎？（不留紀錄，直接揭曉）'))
+      finishBlindSession('無交易放棄', { skipHistory: true });
+    return;
+  }
+  if (confirm('確定結束盲測？未平倉部位會以現價自動平倉，並揭曉標的。'))
+    finishBlindSession('手動結束');
+}
+
+function finishBlindSession(endReason, opts = {}) {
+  const b = state.blind;
+  if (!b) return;
+  stopPlay();
+  // 本輪未平倉部位以現價自動平倉
+  const bar = state.candles[Math.min(state.cursorIndex, state.candles.length - 1)];
+  // 未成交的掛單直接取消（不算交易）
+  state.positions = state.positions.filter((p) => !(p.status === 'pending' && p.blindId === b.id));
+  const openPos = state.positions.filter((p) => p.status === 'open' && p.blindId === b.id);
+  for (const p of openPos) {
+    closePosition(p, bar.close, '盲測結束平倉', bar.time, endReason || '');
+  }
+  // 揭曉即還原：本輪交易的價格從正規化值換回真實價格（點值同步換算，盈虧與 R 不變）
+  // 否則紀錄會出現「NQ @ 102」這種正規化價位，看起來像資料錯誤
+  const toReal = (v) => (v == null ? null : +(v / b.scale).toFixed(priceDp(v / b.scale)));
+  for (const t of state.trades) {
+    if (t.blindId !== b.id || t.pricesRestored) continue;
+    t.entryPrice = toReal(t.entryPrice);
+    t.exitPrice = toReal(t.exitPrice);
+    t.stopLoss = toReal(t.stopLoss);
+    t.takeProfit = toReal(t.takeProfit);
+    if (t.pnlPts != null) t.pnlPts = t.pnlPts / b.scale;
+    if (t.pv != null) t.pv = t.pv * b.scale;
+    t.pricesRestored = true;
+  }
+  // 統計本輪
+  const trades = state.trades.filter((t) => t.blindId === b.id);
+  const longs = trades.filter((t) => t.side === 'long');
+  const shorts = trades.filter((t) => t.side === 'short');
+  const wins = trades.filter((t) => t.pnl > 0);
+  const raw = state.cache[`${b.symbol}_${b.timeframe}`] || [];
+  const endIdx = Math.min(state.cursorIndex, b.endIndex);
+  const p0 = raw[b.startIndex]?.close,
+    p1 = raw[endIdx]?.close;
+  // R 序列（時間正序）→ 累積曲線 / 峰值回撤 / 獲利因子
+  const chrono = [...trades].sort((x, y) => x.exitTime - y.exitTime);
+  const rSeq = chrono.map((t) => t.rMultiple || 0);
+  const rCurve = [0];
+  let cum = 0,
+    peak = 0,
+    maxDD = 0;
+  for (const r of rSeq) {
+    cum += r;
+    rCurve.push(+cum.toFixed(2));
+    peak = Math.max(peak, cum);
+    maxDD = Math.max(maxDD, peak - cum);
+  }
+  const winR = rSeq.filter((r) => r > 0);
+  const lossR = rSeq.filter((r) => r < 0);
+  const grossWinR = winR.reduce((s, r) => s + r, 0);
+  const grossLossR = Math.abs(lossR.reduce((s, r) => s + r, 0));
+  const totalPnl = trades.reduce((s, t) => s + (t.pnl || 0), 0);
+  const summary = {
+    id: b.id,
+    symbol: b.symbol,
+    timeframe: b.timeframe,
+    startTime: raw[b.startIndex]?.time ?? null,
+    endTime: raw[endIdx]?.time ?? null,
+    barsPlayed: endIdx - b.startIndex,
+    finishedAt: Date.now(),
+    trades: trades.length,
+    longs: longs.length,
+    shorts: shorts.length,
+    longWins: longs.filter((t) => t.pnl > 0).length,
+    shortWins: shorts.filter((t) => t.pnl > 0).length,
+    winRate: trades.length ? (wins.length / trades.length) * 100 : null,
+    totalPnl,
+    avgR: trades.length ? trades.reduce((s, t) => s + (t.rMultiple || 0), 0) / trades.length : 0,
+    bhPct: p0 && p1 ? (p1 / p0 - 1) * 100 : null, // 同期間買進持有報酬（對照基準）
+    // 量化績效卡欄位
+    perfPct: state.settings.balance ? (totalPnl / state.settings.balance) * 100 : null,
+    cumR: +cum.toFixed(2),
+    maxDD: +maxDD.toFixed(2),
+    // Infinity 經 JSON.stringify 會變 null，重整後 ∞ 會掉成「—」：改用旗標保存
+    profitFactor: grossLossR > 0 ? +(grossWinR / grossLossR).toFixed(2) : null,
+    profitFactorInf: grossLossR === 0 && grossWinR > 0,
+    avgWinR: winR.length ? +(grossWinR / winR.length).toFixed(2) : null,
+    avgLossR: lossR.length ? +(-(grossLossR / lossR.length)).toFixed(2) : null,
+    rCurve,
+  };
+  // 爆倉收場要留痕：歷史列表若只看盈虧，看不出這輪是「被打到出局」還是「正常跑完」
+  if (opts.blownUp) summary.blownUp = true;
+  if (!opts.skipHistory) state.blindHistory.unshift(summary);
+  delete state.drawings[`blind_${b.id}`]; // 盲測畫線用完即丟
+  delete _fuseNotified[b.id]; // 該輪的熔斷計數一起收掉，不留殘值
+  delete _blownUp[b.id]; // 同理：輪次結束，爆倉旗標不留殘值
+  state.blind = null;
+  saveStorage();
+  showBlindResult(summary, opts.skipHistory);
+  // 揭曉：回到該標的正常模式（原始價格、時間軸依使用者設定）
+  chart.timeScale().applyOptions({ visible: state.timeAxisVisible });
+  syncTopbarUI();
+  loadAndStart();
+}
+
+// R 權益曲線 → inline SVG（正報酬綠線、負報酬紅線、0 軸虛線）
+function rCurveSvg(curve, w = 430, h = 120) {
+  if (!Array.isArray(curve) || curve.length < 2) return '';
+  const min = Math.min(...curve, 0),
+    max = Math.max(...curve, 0);
+  const span = max - min || 1;
+  const pad = 6;
+  const px = (i) => pad + (i * (w - pad * 2)) / (curve.length - 1);
+  const py = (v) => pad + ((max - v) * (h - pad * 2)) / span;
+  const pts = curve.map((v, i) => `${px(i).toFixed(1)},${py(v).toFixed(1)}`).join(' ');
+  const up = curve[curve.length - 1] >= 0;
+  const color = up ? '#2be3a9' : '#ff5b6a';
+  const zy = py(0).toFixed(1);
+  return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:auto;display:block;" preserveAspectRatio="none">
+    <line x1="${pad}" x2="${w - pad}" y1="${zy}" y2="${zy}" stroke="rgba(149,152,161,0.25)" stroke-width="1" stroke-dasharray="4 4"/>
+    <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+  </svg>`;
+}
+
+function showBlindResult(s, wasAbandoned) {
+  const info = symInfo(s.symbol);
+  const catLabel = CATEGORY_LABELS[info.category] || '';
+  const period =
+    s.startTime && s.endTime
+      ? `${fmtDateTime(s.startTime, '1d')} ~ ${fmtDateTime(s.endTime, '1d')}`
+      : '—';
+  const n = s.trades || 0;
+  const winCount = (s.longWins ?? 0) + (s.shortWins ?? 0);
+  const lossCount = n - winCount;
+  const sign = (v) => (v > 0 ? '+' : '');
+  const ud = (v) => (v == null ? '' : v >= 0 ? 'up' : 'down');
+  const num = (v, dp = 2, suffix = '') =>
+    v == null || Number.isNaN(v) ? '—' : !isFinite(v) ? '∞' : `${sign(v)}${v.toFixed(dp)}${suffix}`;
+  // 卡片：label / 值 / class / 註解
+  const cards = [
+    ['PERFORMANCE %', num(s.perfPct, 2, '%'), ud(s.perfPct), `本輪盈虧 ${fmtMoney(s.totalPnl)}`],
+    ['CUMULATIVE R', num(s.cumR, 2, 'R'), ud(s.cumR), '全部交易 R 加總'],
+    [
+      'WIN RATE',
+      s.winRate == null ? '—' : s.winRate.toFixed(1) + '%',
+      (s.winRate ?? 0) >= 50 ? 'up' : 'down',
+      `${winCount}W / ${lossCount}L`,
+    ],
+    ['EXPECTANCY', num(s.avgR, 2, 'R'), ud(s.avgR), '平均每單'],
+    [
+      'PROFIT FACTOR',
+      s.profitFactorInf || s.profitFactor === Infinity
+        ? '∞'
+        : s.profitFactor == null
+          ? '—'
+          : s.profitFactor.toFixed(2),
+      s.profitFactorInf || (s.profitFactor ?? 0) >= 1 ? 'up' : 'down',
+      'Gross win R / loss R',
+    ],
+    [
+      'MAX DD',
+      s.maxDD == null ? '—' : '-' + s.maxDD.toFixed(2) + 'R',
+      s.maxDD ? 'down' : '',
+      'R 峰值回撤',
+    ],
+    ['AVG WIN', num(s.avgWinR, 2, 'R'), 'up', 'winning trades'],
+    ['AVG LOSS', num(s.avgLossR, 2, 'R'), s.avgLossR != null ? 'down' : '', 'losing trades'],
+    ['TRADES', String(n), '', `${s.longs ?? 0} 多 / ${s.shorts ?? 0} 空`],
+    ['BUY & HOLD', num(s.bhPct, 2, '%'), ud(s.bhPct), '同期持有對照'],
+  ];
+  const curveHtml =
+    Array.isArray(s.rCurve) && s.rCurve.length >= 2
+      ? `
+    <div class="perf-curve">
+<div class="pc-title">R Equity Curve</div>
+<div class="pc-sub">本輪盲測 · ${n} 筆 · ${num(Math.min(...s.rCurve), 2)}R → ${num(s.cumR, 2)}R</div>
+${rCurveSvg(s.rCurve)}
+<div class="pc-dates"><span>${s.startTime ? fmtDateTime(s.startTime, '1d') : ''}</span><span>${s.endTime ? fmtDateTime(s.endTime, '1d') : ''}</span></div>
+    </div>`
+      : '';
+  $('blind-result-body').innerHTML = `
+    <div class="blind-reveal">
+<div class="blind-reveal-sym">${s.blownUp ? '💀' : '🎯'} ${escHtml(info.name)}${s.blownUp ? '（爆倉出局）' : ''}</div>
+<div class="blind-reveal-meta">${escHtml(catLabel)} · ${s.timeframe === '1d' ? '日線' : '1 小時'} · ${period}（${s.barsPlayed} 根）</div>
+    </div>
+    <div class="perf-grid">
+${cards
+  .map(
+    ([label, value, cls, sub]) => `
+  <div class="perf-card">
+    <div class="pl">${label}</div>
+    <div class="pv ${cls}">${value}</div>
+    <div class="ps">${escHtml(sub)}</div>
+  </div>`,
+  )
+  .join('')}
+    </div>
+    ${curveHtml}
+    ${n === 0 ? '<div class="field-hint" style="margin-top:10px;">這輪沒有下單——觀察也是練習，下輪試著找一個進場點。</div>' : ''}
+    ${wasAbandoned ? '<div class="field-hint" style="margin-top:10px;">此輪未計入盲測紀錄。</div>' : ''}
+  `;
+  $('blind-result-modal').classList.add('show');
+}
+
+function wireBlindMode() {
+  $('btn-blind').addEventListener('click', () => {
+    if (state.blind) requestEndBlind();
+    else openBlindSetup();
+  });
+  $('btn-blind-start').addEventListener('click', startBlindSession);
+  $$('#blind-cats input').forEach((c) => c.addEventListener('change', updateBlindPoolHint));
+  $('blind-tf').addEventListener('change', updateBlindPoolHint);
+  $('blind-len').addEventListener('change', updateBlindPoolHint);
+  // 關頁前保盲測進度（含 cursor），下次開啟可續玩
+  window.addEventListener('beforeunload', () => {
+    try {
+      if (state.blind) {
+        state.blind.cursorIndex = state.cursorIndex;
+        localStorage.setItem(
+          STORAGE_KEYS.blind,
+          JSON.stringify({ active: state.blind, history: state.blindHistory }),
+        );
+      }
+    } catch {}
+  });
+}
+
+// ---------- Wire events ----------
+function wireEvents() {
+  // Symbol / TF
+  $('symbol-select').addEventListener('change', (e) =>
+    setSymbolTF(e.target.value, state.timeframe),
+  );
+  $$('#tf-seg button').forEach((b) =>
+    b.addEventListener('click', () => setSymbolTF(state.symbol, b.dataset.tf)),
+  );
+  // 圖表類型
+  $$('#ctype-seg button').forEach((b) =>
+    b.addEventListener('click', () => setChartType(b.dataset.ctype)),
+  );
+
+  // Replay
+  $('btn-prev').addEventListener('click', () => {
+    stopPlay();
+    retreatBar(1);
+  });
+  $('btn-next').addEventListener('click', () => {
+    stopPlay();
+    advanceBar(1);
+  });
+  $('btn-skip10').addEventListener('click', () => {
+    stopPlay();
+    advanceBar(10);
+  });
+  $('btn-play').addEventListener('click', togglePlay);
+  $('speed-slider').addEventListener('input', (e) => {
+    state.playSpeed = +e.target.value;
+    $('speed-val').textContent = e.target.value;
+  });
+  $('btn-jump').addEventListener('click', () => jumpToDate($('jump-date').value));
+
+  // Side tabs
+  $$('.side-tabs button').forEach((b) =>
+    b.addEventListener('click', () => switchSidePane(b.dataset.pane)),
+  );
+
+  // 一鍵平倉（持倉中標題列）
+  $('btn-close-all').addEventListener('click', closeAllPositions);
+
+  // Order side
+  $$('.order-side-toggle button').forEach((b) =>
+    b.addEventListener('click', () => setOrderSide(b.dataset.orderSide)),
+  );
+  ['order-entry', 'order-sl', 'order-tp', 'order-risk'].forEach((id) => {
+    const el = $(id);
+    el.addEventListener('input', () => {
+      el.dataset.touched = '1';
+      updateOrderSummary();
+      syncFormToPosTool(); // 部位工具開啟時，欄位改動即時反映到圖上
+    });
+  });
+  $('btn-submit-order').addEventListener('click', submitOrder);
+
+  // 選取繪圖浮動列的刪除鈕
+  $('dsb-delete').addEventListener('click', deleteSelectedDrawing);
+
+  // 平倉比例（分批出場）
+  $$('#close-frac-row button').forEach((b) =>
+    b.addEventListener('click', () => {
+      _closeFrac = +b.dataset.frac;
+      $$('#close-frac-row button').forEach((x) => x.classList.toggle('active', x === b));
+      updateCloseInfo();
+    }),
+  );
+
+  // Modals
+  $$('[data-close]').forEach((b) =>
+    b.addEventListener('click', () => $(b.dataset.close).classList.remove('show')),
+  );
+  $('btn-confirm-close').addEventListener('click', confirmManualClose);
+
+  // Settings
+  $('btn-save-settings').addEventListener('click', saveSettingsAction);
+  $('btn-export-json').addEventListener('click', exportJson);
+  $('btn-clear-all').addEventListener('click', clearAll);
+  $('btn-signout').addEventListener('click', () => {
+    if (confirm('確定要登出？')) doSignOut();
+  });
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    // 拖曳進行中不接受回放快捷鍵：腳下的 K 棒在動會讓拖曳的參考價一直變
+    if (dragState || state.drawingDrag || posToolDrag) return;
+    if (e.key === ' ') {
+      e.preventDefault();
+      togglePlay();
+    }
+    if (e.key === 'ArrowRight') {
+      stopPlay();
+      advanceBar(1);
+    }
+    if (e.key === 'ArrowLeft') {
+      stopPlay();
+      retreatBar(1);
+    }
+  });
+}
+
+// ---------- Login flow ----------
+function wireLogin() {
+  $('btn-google').addEventListener('click', () => {
+    doGoogleSignIn();
+  });
+  $('btn-magiclink').addEventListener('click', sendMagicLink);
+  $('btn-plans').addEventListener('click', () => {
+    goPlans();
+  });
+  $('btn-switch-account').addEventListener('click', () => {
+    setForceChooser(true); // 下一次 Google 登入強制跳帳號選擇器
+    backToLogin();
+    _signOutPromise = window.sb?.auth.signOut().catch(() => {});
+  });
+  // 從 Skool 按上一頁若走 bfcache，狀態列會殘留「前往中…」看起來當掉
+  window.addEventListener('pageshow', (e) => {
+    if (e.persisted) $('nomember-count').textContent = '';
+  });
+  $('login-email').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') sendMagicLink();
+  });
+}
+
+// ---------- Boot ----------
+// 從 data/symbols.json 載入標的清單（失敗時退回內建三檔）
+async function loadSymbolManifest() {
+  try {
+    const res = await fetch('data/symbols.json');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const j = await res.json();
+    if (Array.isArray(j.symbols) && j.symbols.length) {
+      SYMBOLS = {};
+      for (const s of j.symbols) SYMBOLS[s.key] = s;
+      if (j.categories) CATEGORY_LABELS = j.categories;
+    }
+  } catch (e) {
+    console.warn('symbols.json 載入失敗，使用內建標的', e);
+    SYMBOLS = { ...BUILTIN_SYMBOLS };
+  }
+}
+
+function populateSymbolSelect() {
+  const sel = $('symbol-select');
+  const cats = ['futures', 'crypto', 'us', 'tw'];
+  sel.innerHTML = cats
+    .map((cat) => {
+      const items = Object.values(SYMBOLS).filter((s) => s.category === cat);
+      if (!items.length) return '';
+      return (
+        `<optgroup label="${escHtml(CATEGORY_LABELS[cat] || cat)}">` +
+        items.map((s) => `<option value="${escHtml(s.key)}">${escHtml(s.name)}</option>`).join('') +
+        '</optgroup>'
+      );
+    })
+    .join('');
+  if (SYMBOLS[state.symbol]) sel.value = state.symbol;
+}
+
+async function bootApp() {
+  loadStorage();
+  await loadSymbolManifest();
+  if (!SYMBOLS[state.symbol]) state.symbol = Object.keys(SYMBOLS)[0];
+  $('set-balance').value = state.settings.balance;
+  initPaneResizer(); // 要在 initChart 前：圖表建立當下就吃到還原後的側欄寬度，省一次 resize
+  initChart();
+  initDrawCanvas();
+  initDragSLTP();
+  wireEvents();
+  wireDrawingEvents();
+  wireIndicatorsPanel();
+  wireTemplatesPanel();
+  wireBlindMode();
+  populateSymbolSelect();
+  // Sync subpane time scale with main chart pan/zoom
+  chart.timeScale().subscribeVisibleLogicalRangeChange(syncSubpaneRanges);
+  setOrderSide('long');
+  if (state.blind && SYMBOLS[state.blind.symbol]) {
+    await enterBlindReplay(); // 還原上次未完成的盲測
+    showToast('已還原進行中的盲測', 'success');
+  } else {
+    state.blind = null;
+    await loadAndStart();
+    syncTopbarUI();
+    openBlindSetup(); // 盲測為預設入口；「跳過」即回自由練習模式
+  }
+}
+
+// ============================================================
+// Drawing templates UI
+// ============================================================
+function getTemplateContextType() {
+  // Priority: active tool > selected drawing's type
+  if (state.tool && state.drawTemplates && state.drawTemplates[state.tool]) return state.tool;
+  if (state.selectedDrawingId) {
+    const d = getCurrentDrawings().find((x) => x.id === state.selectedDrawingId);
+    if (d && state.drawTemplates && state.drawTemplates[d.type]) return d.type;
+  }
+  return null;
+}
+
+function refreshTemplatesPanel() {
+  const panel = $('templates-panel');
+  if (!panel || !panel.classList.contains('show')) return;
+  const ctxType = getTemplateContextType();
+  const title = $('tpl-title');
+  const hint = $('tpl-context-hint');
+  const list = $('tpl-list');
+  const TYPE_LABEL = {
+    trend: '趨勢線',
+    hline: '水平線',
+    rect: '矩形',
+    fib: '斐波那契',
+    ray: '射線',
+    extline: '延伸線',
+    vline: '垂直線',
+    channel: '平行通道',
+    ellipse: '橢圓',
+    arrow: '箭頭',
+    text: '文字',
+    pricelabel: '價格標籤',
+    measure: '測量',
+  };
+  if (!ctxType) {
+    title.textContent = '模板';
+    hint.style.display = 'block';
+    list.innerHTML = '';
+    return;
+  }
+  hint.style.display = 'none';
+  const sel = state.selectedDrawingId
+    ? getCurrentDrawings().find((x) => x.id === state.selectedDrawingId)
+    : null;
+  if (sel && sel.type === ctxType) {
+    title.innerHTML = `${TYPE_LABEL[ctxType]} 模板 <span style="color:var(--text-3);font-weight:400;">— 已選取一筆</span>`;
+  } else {
+    title.textContent = `${TYPE_LABEL[ctxType]} 模板`;
+  }
+  const tpls = state.drawTemplates[ctxType] || [];
+  const activeId = sel ? null : state.activeTplId[ctxType];
+  list.innerHTML = tpls
+    .map(
+      (t) => `
+    <div class="tpl-row ${t.id === activeId ? 'active' : ''}" data-tpl-id="${t.id}">
+<span class="swatch" style="background:${t.style.color};"></span>
+<span class="preview-line">${tplPreviewSvg(t.style)}</span>
+<span class="name">${escHtml(t.name)}</span>
+${t.style.label ? `<span class="label-pill">${escHtml(t.style.label)}</span>` : ''}
+<button class="del" data-del-tpl="${t.id}" title="刪除">✕</button>
+    </div>
+  `,
+    )
+    .join('');
+  // Click row to apply
+  list.querySelectorAll('.tpl-row').forEach((row) => {
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('[data-del-tpl]')) return;
+      const tplId = row.dataset.tplId;
+      applyTemplate(ctxType, tplId);
+    });
+  });
+  list.querySelectorAll('[data-del-tpl]').forEach((b) => {
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = b.dataset.delTpl;
+      deleteTemplate(ctxType, id);
+    });
+  });
+  // Pre-fill editor with active or selected style
+  fillTemplateEditor(sel ? sel.style : tpls.find((t) => t.id === activeId)?.style);
+}
+
+function tplPreviewSvg(style) {
+  const dash = { 1: '2,2', 2: '4,2', 3: '6,3', 4: '1,3' }[style.lineStyle] || '';
+  const sw = style.lineWidth || 1.5;
+  return `<svg width="26" height="14" viewBox="0 0 26 14"><line x1="2" y1="7" x2="24" y2="7" stroke="${style.color}" stroke-width="${sw}" ${dash ? `stroke-dasharray="${dash}"` : ''}/></svg>`;
+}
+
+function fillTemplateEditor(style) {
+  if (!style) {
+    $('tpl-edit-name').value = '';
+    return;
+  }
+  $('tpl-edit-color').value = style.color || '#3b82f6';
+  $('tpl-edit-width').value = String(style.lineWidth ?? 2);
+  $('tpl-edit-linestyle').value = String(style.lineStyle ?? 0);
+  $('tpl-edit-label').value = style.label || '';
+}
+function getEditorStyle() {
+  return {
+    color: $('tpl-edit-color').value,
+    lineWidth: +$('tpl-edit-width').value,
+    lineStyle: +$('tpl-edit-linestyle').value,
+    label: $('tpl-edit-label').value.trim(),
+  };
+}
+
+function applyTemplate(toolType, tplId) {
+  const tpl = state.drawTemplates[toolType].find((x) => x.id === tplId);
+  if (!tpl) return;
+  // Always set as active for new drawings
+  state.activeTplId[toolType] = tplId;
+  // If a drawing of this type is selected, also apply to it
+  if (state.selectedDrawingId) {
+    const d = getCurrentDrawings().find((x) => x.id === state.selectedDrawingId);
+    if (d && d.type === toolType) {
+      d.style = { ...tpl.style };
+      d.color = tpl.style.color;
+    }
+  }
+  saveStorage();
+  redrawDrawings();
+  refreshTemplatesPanel();
+  showToast(`已套用「${tpl.name}」`, 'success');
+}
+
+function deleteTemplate(toolType, tplId) {
+  const arr = state.drawTemplates[toolType];
+  if (arr.length <= 1) {
+    showToast('至少保留 1 個模板', 'error');
+    return;
+  }
+  if (!confirm('刪除這個模板？')) return;
+  state.drawTemplates[toolType] = arr.filter((x) => x.id !== tplId);
+  if (state.activeTplId[toolType] === tplId) {
+    state.activeTplId[toolType] = state.drawTemplates[toolType][0].id;
+  }
+  saveStorage();
+  refreshTemplatesPanel();
+  showToast('已刪除模板', 'success');
+}
+
+function saveStyleAsNewTemplate() {
+  const ctxType = getTemplateContextType();
+  if (!ctxType) {
+    showToast('請先選一個工具或圖形', 'error');
+    return;
+  }
+  const name = $('tpl-edit-name').value.trim();
+  if (!name) {
+    showToast('請輸入模板名稱', 'error');
+    return;
+  }
+  const style = getEditorStyle();
+  const tpl = {
+    id: 'tpl-' + ctxType + '-' + Date.now().toString(36),
+    name,
+    style,
+  };
+  state.drawTemplates[ctxType].push(tpl);
+  state.activeTplId[ctxType] = tpl.id;
+  saveStorage();
+  refreshTemplatesPanel();
+  showToast(`已新增「${name}」`, 'success');
+  $('tpl-edit-name').value = '';
+}
+
+function applyEditorStyleToSelectedOrActive() {
+  const ctxType = getTemplateContextType();
+  if (!ctxType) {
+    showToast('請先選一個工具或圖形', 'error');
+    return;
+  }
+  const style = getEditorStyle();
+  // If a drawing is selected, apply to it
+  if (state.selectedDrawingId) {
+    const d = getCurrentDrawings().find((x) => x.id === state.selectedDrawingId);
+    if (d && d.type === ctxType) {
+      d.style = { ...style };
+      d.color = style.color;
+      saveStorage();
+      redrawDrawings();
+      showToast('已套用樣式', 'success');
+      return;
+    }
+  }
+  // Otherwise update active template's style
+  const activeId = state.activeTplId[ctxType];
+  const tpl = state.drawTemplates[ctxType].find((x) => x.id === activeId);
+  if (tpl) {
+    tpl.style = { ...style };
+    saveStorage();
+    refreshTemplatesPanel();
+    showToast('已更新模板樣式', 'success');
+  }
+}
+
+function wireTemplatesPanel() {
+  const btn = $('btn-templates');
+  const panel = $('templates-panel');
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    // Close indicators panel if open
+    $('indicators-panel').classList.remove('show');
+    panel.classList.toggle('show');
+    refreshTemplatesPanel();
+  });
+  document.addEventListener('click', (e) => {
+    if (!panel.contains(e.target) && e.target !== btn && !btn.contains(e.target)) {
+      panel.classList.remove('show');
+    }
+  });
+  $('btn-tpl-saveas').addEventListener('click', saveStyleAsNewTemplate);
+  $('btn-tpl-save-current').addEventListener('click', applyEditorStyleToSelectedOrActive);
+  // Live preview when editor changes
+  ['tpl-edit-color', 'tpl-edit-width', 'tpl-edit-linestyle', 'tpl-edit-label'].forEach((id) => {
+    $(id).addEventListener('input', () => {
+      // If a drawing is selected, preview style live
+      if (state.selectedDrawingId) {
+        const d = getCurrentDrawings().find((x) => x.id === state.selectedDrawingId);
+        const ctxType = getTemplateContextType();
+        if (d && ctxType && d.type === ctxType) {
+          d.style = getEditorStyle();
+          d.color = d.style.color;
+          redrawDrawings();
+        }
+      }
+    });
+  });
+}
+
+function wireIndicatorsPanel() {
+  const panel = $('indicators-panel');
+  const btn = $('btn-indicators');
+
+  // 泛用路徑取值：'ema.0' / 'stoch' / 'sma.1' → 設定物件
+  const cfgAtPath = (pathStr) => {
+    let t = state.indicators;
+    for (const seg of pathStr.split('.')) {
+      if (t == null) return null;
+      t = t[/^\d+$/.test(seg) ? +seg : seg];
+    }
+    return t ?? null;
+  };
+  // 泛用同步：所有 checkbox / 參數 / 顏色一律由 data-* 路徑驅動
+  function syncUiFromState() {
+    let activeCount = 0;
+    panel.querySelectorAll('input[type="checkbox"][data-ind]').forEach((cb) => {
+      const key = cb.dataset.ind;
+      const m = key.match(/^(ema|sma)(\d+)$/);
+      const cfg = m ? state.indicators[m[1]][+m[2]] : state.indicators[key];
+      if (!cfg) return;
+      cb.checked = !!cfg.enabled;
+      if (cfg.enabled) activeCount++;
+    });
+    panel.querySelectorAll('input[data-ind-param]').forEach((inp) => {
+      const path = inp.dataset.indParam;
+      const parent = cfgAtPath(path.split('.').slice(0, -1).join('.'));
+      const last = path.split('.').pop();
+      if (parent && parent[last] != null) inp.value = parent[last];
+    });
+    panel.querySelectorAll('input[data-ind-color]').forEach((inp) => {
+      const cfg = cfgAtPath(inp.dataset.indColor);
+      if (cfg && cfg.color) inp.value = cfg.color;
+    });
+    btn.classList.toggle('has-active', activeCount > 0);
+    btn.textContent = activeCount > 0 ? `📊 指標 (${activeCount})` : '📊 指標';
+  }
+  syncUiFromState();
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    panel.classList.toggle('show');
+  });
+  // Click outside to close
+  document.addEventListener('click', (e) => {
+    if (!panel.contains(e.target) && e.target !== btn) {
+      panel.classList.remove('show');
+    }
+  });
+
+  // Toggle checkboxes
+  panel.querySelectorAll('input[type="checkbox"][data-ind]').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      const key = cb.dataset.ind;
+      const m = key.match(/^(ema|sma)(\d+)$/);
+      const cfg = m ? state.indicators[m[1]][+m[2]] : state.indicators[key];
+      if (!cfg) return;
+      cfg.enabled = cb.checked;
+      saveStorage();
+      syncUiFromState();
+      // Trigger re-render
+      const visible = state.candles.slice(0, state.cursorIndex + 1);
+      renderIndicators(visible);
+      redrawDrawings();
+    });
+  });
+
+  // Number params
+  panel.querySelectorAll('input[type="number"][data-ind-param]').forEach((input) => {
+    input.addEventListener('change', () => {
+      const path = input.dataset.indParam.split('.');
+      // path examples: 'ema.0.period', 'bb.period', 'macd.fast'
+      let target = state.indicators;
+      for (let i = 0; i < path.length - 1; i++)
+        target = target[path[i].match(/^\d+$/) ? +path[i] : path[i]];
+      const last = path[path.length - 1];
+      target[last] = +input.value;
+      saveStorage();
+      syncUiFromState();
+      const visible = state.candles.slice(0, state.cursorIndex + 1);
+      renderIndicators(visible);
+      redrawDrawings();
+    });
+  });
+
+  // Color inputs（泛用：'ema.0' / 'sma.1' / 'vwap'）
+  panel.querySelectorAll('input[type="color"][data-ind-color]').forEach((input) => {
+    input.addEventListener('change', () => {
+      const cfg = cfgAtPath(input.dataset.indColor);
+      if (cfg) cfg.color = input.value;
+      saveStorage();
+      const visible = state.candles.slice(0, state.cursorIndex + 1);
+      renderIndicators(visible);
+    });
+  });
+}
+
+function wireDrawingEvents() {
+  // Tool buttons
+  $$('.draw-toolbar button[data-tool]').forEach((b) => {
+    b.addEventListener('click', () => setTool(b.dataset.tool || ''));
+  });
+  // 部位工具（TV 式多空框）
+  $$('.draw-toolbar button[data-postool]').forEach((b) => {
+    b.addEventListener('click', () => setPosTool(b.dataset.postool));
+  });
+  // Color swatches: change default color AND recolor selected drawing if any
+  $$('#draw-color-row button').forEach((b) => {
+    b.addEventListener('click', () => {
+      state.drawColor = b.dataset.color;
+      $$('#draw-color-row button').forEach((x) => x.classList.toggle('active', x === b));
+      recolorSelectedDrawing(b.dataset.color);
+    });
+  });
+  // Actions
+  document
+    .querySelector('.draw-toolbar [data-action="undo"]')
+    .addEventListener('click', undoLastDrawing);
+  document
+    .querySelector('.draw-toolbar [data-action="clear"]')
+    .addEventListener('click', clearAllDrawings);
+  document
+    .querySelector('.draw-toolbar [data-action="toggle-time"]')
+    .addEventListener('click', toggleTimeAxis);
+  // 磁鐵吸附
+  $('btn-magnet').addEventListener('click', () => {
+    state.magnet = !state.magnet;
+    $('btn-magnet').classList.toggle('active', state.magnet);
+    showToast(state.magnet ? '🧲 磁鐵開啟：取點吸附 OHLC' : '磁鐵關閉', 'success');
+  });
+  // 隱藏/顯示所有畫線
+  $('btn-toggle-drawings').addEventListener('click', () => {
+    state.drawingsHidden = !state.drawingsHidden;
+    $('btn-toggle-drawings').classList.toggle('active', state.drawingsHidden);
+    redrawDrawings();
+    showToast(state.drawingsHidden ? '已隱藏所有畫線' : '已顯示畫線', 'success');
+  });
+
+  // ESC: cancel in-progress drawing OR deselect; Delete/Backspace: delete selected
+  document.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if (e.key === 'Escape') {
+      if (state.tool) {
+        if (state.pendingPoints.length) {
+          resetPendingPoints();
+          redrawDrawings();
+          showToast('已取消', 'success');
+        } else {
+          setTool('');
+        }
+      } else if (state.posTool) {
+        clearPosTool();
+        showToast('已關閉部位工具', 'success');
+      } else if (state.selectedDrawingId) {
+        selectDrawing(null);
+      }
+    } else if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedDrawingId) {
+      e.preventDefault();
+      deleteSelectedDrawing();
+    }
+  });
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  wireLogin();
+  showLogin();
+});
+
+// Supabase becomes available asynchronously (ES module import).
+// Hook auth state once it's ready.
+if (window.sb) {
+  setupAuthListener();
+} else {
+  window.addEventListener('supabase-ready', setupAuthListener, { once: true });
+}
+
+// 視覺回歸快照工具(tools/visual-baseline/snap.py)用 dynamic import 取得這些
+// 進入點來驅動各種畫面狀態。模組作用域不像傳統 script 會把宣告掛到全域,
+// 不導出就碰不到。拆成多個模組之後這一段會消失 —— 屆時各模組自己導出,
+// 快照工具直接向真正的擁有者取用。
+export {
+  state,
+  hideLogin,
+  showNotMember,
+  bootApp,
+  switchSidePane,
+  openCloseModal,
+  checkLossStreak,
+  checkBlowUp,
+  updateHotStats,
+  setTool,
+  syncPaneChartSizes,
+};

@@ -53,9 +53,14 @@ KILL_MOTION = """
 
 # 各狀態共用的開機序。bootApp() 尾端會開盲測設定視窗，要自由模式的狀態自己按「跳過」。
 PRELUDE = """
+// 主程式是 ES module,宣告不會掛到全域,只能用 dynamic import 取回模組命名空間。
+// 模組已被頁面載入過,再 import 同一個 URL 拿到的是同一份實例(模組快取),
+// 所以讀寫到的就是 app 正在用的那份狀態。
+window.__m = () => import('/src/main.js');
 window.__snapBoot = async () => {
-  hideLogin();
-  await bootApp();
+  const m = await window.__m();
+  m.hideLogin();
+  await m.bootApp();
   await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
 };
 window.__snapSkipBlind = () => {
@@ -63,16 +68,17 @@ window.__snapSkipBlind = () => {
   if (b) b.click();
 };
 window.__snapFree = async (pane) => {
+  const m = await window.__m();
   await window.__snapBoot();
   window.__snapSkipBlind();
-  if (pane) switchSidePane(pane);
+  if (pane) m.switchSidePane(pane);
 };
 """
 
 # (名稱, 驅動這個狀態的 JS)。每支都是 async function body，在頁面 global scope 執行。
 STATES = [
     ('01-login', ''),
-    ('02-nomember', "showNotMember('tester@example.com');"),
+    ('02-nomember', "(await window.__m()).showNotMember('tester@example.com');"),
     ('03-blind-setup', 'await window.__snapBoot();'),
     ('04-free-order', "await window.__snapFree('order');"),
     ('05-free-positions', "await window.__snapFree('positions');"),
@@ -83,31 +89,32 @@ STATES = [
         '09-close-modal',
         """
         await window.__snapFree('positions');
-        const p = state.positions.find(x => x.status === 'open');
-        openCloseModal(p.id);
+        const m = await window.__m();
+        m.openCloseModal(m.state.positions.find((x) => x.status === 'open').id);
         """,
     ),
     (
         '10-fuse-modal',
         """
         await window.__snapFree('trades');
-        checkLossStreak();
+        (await window.__m()).checkLossStreak();
         """,
     ),
     (
         '11-blowup-modal',
         """
         await window.__snapFree('trades');
-        updateHotStats();                      // 權益 > 0 → 爆倉判定上膛
-        state.trades.unshift({ ...state.trades[0], id: 'snap-ruin', pnl: -1e9, rMultiple: -99 });
-        checkBlowUp();
+        const m = await window.__m();
+        m.updateHotStats();                    // 權益 > 0 → 爆倉判定上膛
+        m.state.trades.unshift({ ...m.state.trades[0], id: 'snap-ruin', pnl: -1e9, rMultiple: -99 });
+        m.checkBlowUp();
         """,
     ),
     (
         '12-draw-tool-active',
         """
         await window.__snapFree('order');
-        setTool('hline');
+        (await window.__m()).setTool('hline');
         """,
     ),
     (
@@ -117,15 +124,16 @@ STATES = [
         const main = document.getElementById('main-pane');
         main.style.setProperty('--side-w', '520px');
         main.style.setProperty('--side-h', '420px');
-        syncPaneChartSizes();
+        (await window.__m()).syncPaneChartSizes();
         """,
     ),
 ]
 
 # fixture 用固定 id，價格與時間則由靜態 K 棒資料推導（硬寫價格會落在圖表範圍外看不到）。
 MAKE_FIXTURE = """
-() => {
-  const c = state.candles, cur = state.cursorIndex;
+async () => {
+  const M = await window.__m();
+  const c = M.state.candles, cur = M.state.cursorIndex;
   const at = (off) => c[cur - off];
   const dp = (v) => +v.toFixed(2);
   const mk = (i, side, off, pnlR) => {
