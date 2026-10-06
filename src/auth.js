@@ -36,7 +36,12 @@ function setUser(u) {
 const PAID_TIERS = ['starter', 'vip', 'pro', 'private'];
 const VIP_TIERS = ['vip', 'pro', 'private'];
 const TOOL_ACCESS_KEY = 'trader-sim';
-const TOOL_ACCESS_FALLBACK = 'legacy_paid';
+// 中央設定讀不到時的門檻。2026-10-06 由站主決定改為 member（有方舟藍圖帳號即可用）：
+// 中央設定所需的 migration 0109/0113 尚未套用到正式資料庫，後台切換存不進去，
+// 這段期間一律走這個預設值。member 仍要求登入，所以最多只開放給方舟帳號，不會變成免登入。
+// ⚠ 0113 套上正式環境那一刻，trader-sim 的種子值是 legacy_paid，會立刻蓋過這裡、
+//   變回只限付費會員——屆時要同時到主站後台 /admin/tiers 把「K 棒回放」設為「一般會員」。
+const TOOL_ACCESS_FALLBACK = 'member';
 
 let _toolAccessPromise = null;
 
@@ -48,23 +53,37 @@ async function fetchToolAccessRequirement() {
       return TOOL_ACCESS_FALLBACK;
     }
     const row = data.settings.find(
-      (item) =>
-        item &&
-        item.surface === 'external' &&
-        item.toolKey === TOOL_ACCESS_KEY,
+      (item) => item && item.surface === 'external' && item.toolKey === TOOL_ACCESS_KEY,
     );
     const requirement = row?.minIdentity;
     return ['visitor', 'member', 'vip', 'legacy_paid', 'disabled'].includes(requirement)
       ? requirement
       : TOOL_ACCESS_FALLBACK;
   } catch {
-    // 中央設定讀不到時維持改版前「有效訂閱會員」門檻，不擴權。
     return TOOL_ACCESS_FALLBACK;
   }
 }
 
+// 登入卡上「誰可以用」那句話跟著實際門檻走。HTML 不寫死：寫死的話門檻一改，
+// 畫面就會說謊（例如開放給一般會員後還寫「僅限有效訂閱會員」，把人勸退）。
+// 門檻查出來之前先留空，寧可晚一點出現，也不要先閃一句錯的。
+const ACCESS_NOTES = {
+  member: '還沒有帳號？直接用 Google 或 Email 註冊即可',
+  vip: '僅限 VIP 會員使用；尚未加入請先至 ark-blueprint.com',
+  legacy_paid: '僅限有效訂閱會員使用；尚未訂閱請先至 ark-blueprint.com',
+  disabled: '練功房目前暫停開放',
+};
+
 function getToolAccessRequirement() {
-  if (!_toolAccessPromise) _toolAccessPromise = fetchToolAccessRequirement();
+  if (!_toolAccessPromise) {
+    _toolAccessPromise = fetchToolAccessRequirement().then((requirement) => {
+      // 用 ?. ：這個 promise 會被快取給整個登入流程用，萬一欄位被改名/刪掉，
+      // 這裡 throw 會讓所有人卡在登入。文案缺一句可以接受，登入壞掉不行。
+      const note = $('login-access-note');
+      if (note) note.textContent = ACCESS_NOTES[requirement] || '';
+      return requirement;
+    });
+  }
   return _toolAccessPromise;
 }
 

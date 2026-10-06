@@ -23,7 +23,14 @@ with sync_playwright() as pw:
     page.add_init_script(SEED)
     errors = []
     page.on('pageerror', lambda e: errors.append(str(e)))
-    page.on('console', lambda m: errors.append(m.text) if m.type == 'error' else None)
+    # 上面刻意擋掉 Supabase 連線，瀏覽器會為每個被擋的請求印一行
+    # 「Failed to load resource」。那是測試環境造成的，不是程式錯誤，排除掉。
+    page.on(
+        'console',
+        lambda m: errors.append(m.text)
+        if m.type == 'error' and not m.text.startswith('Failed to load resource')
+        else None,
+    )
     page.goto(URL, wait_until='load')
 
     # 開機 → 跳過盲測，回自由模式

@@ -78,7 +78,8 @@
         </div>
         <div class="login-hint">
           使用<strong>方舟藍圖</strong>同一組帳號登入<br />
-          僅限有效訂閱會員使用；尚未訂閱請先至 ark-blueprint.com
+          <!-- 這句跟著實際門檻變，由 auth.js 的 getToolAccessRequirement() 填入 -->
+          <span id="login-access-note"></span>
         </div>
       </div>
 
