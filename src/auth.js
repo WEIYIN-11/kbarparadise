@@ -7,6 +7,12 @@ import { renderPositions, updateOrderSummary } from './orders.js';
 import { state } from './state.js';
 import { fillMissingTemplateTypes, mergeIndicators, saveStorage } from './storage.js';
 import { renderReport, renderTrades, updateHotStats } from './trades.js';
+import {
+  identityAllows,
+  legacyPaidAccess,
+  signedInIdentity,
+  traderSimRequirement,
+} from './tool-access.js';
 import { $, showToast } from './util.js';
 
 // ---------- Auth + Firestore sync ----------
@@ -32,32 +38,78 @@ function setUser(u) {
   }
 }
 
-// 會員資格判定：與方舟主站 fetchMembershipOnce 同一套規則
-// （members.tier ∈ 付費方案 且 expires_at 未過期，或 admin_users 有列）
-const PAID_TIERS = ['starter', 'vip', 'pro', 'private'];
+function isMissingToolAccessRpc(error) {
+  if (!error) return false;
+  if (error.code === 'PGRST202') return true;
+  return /get_tool_access_settings|schema cache|could not find the function/i.test(
+    error.message || '',
+  );
+}
+
+async function fetchToolAccessRequirement() {
+  if (!window.sb) return { ok: false, error: 'Supabase 尚未載入' };
+  try {
+    const { data, error } = await window.sb.rpc('get_tool_access_settings');
+    if (error) {
+      // 0109 / 0113 尚未套用時維持舊會員 Gate，不把 rollout 順序變成停機。
+      if (isMissingToolAccessRpc(error)) return { ok: true, source: 'legacy', required: null };
+      return { ok: false, error: error.message };
+    }
+    const required = traderSimRequirement(data);
+    return required
+      ? { ok: true, source: 'formal', required }
+      : { ok: true, source: 'legacy', required: null };
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) };
+  }
+}
+
+// 會員身分仍讀方舟主站 members/admin_users，但是否能進 K 棒回放改由
+// get_tool_access_settings 的 external/trader-sim 設定決定。
+// 0113 尚未存在時，維持舊的「有效訂閱會員或 admin」相容 Gate。
 async function fetchMembership(email, uid) {
   if (!window.sb) return { ok: false, error: 'Supabase 尚未載入' };
   try {
-    const [memberRes, adminRes] = await Promise.all([
+    const [memberRes, adminRes, toolAccess] = await Promise.all([
       window.sb
         .from('members')
         .select('tier, expires_at')
         .eq('email', email.toLowerCase())
         .maybeSingle(),
       window.sb.from('admin_users').select('role').eq('user_id', uid).maybeSingle(),
+      fetchToolAccessRequirement(),
     ]);
-    // 查詢錯誤 ≠ 非會員：網路閃斷不能把付費會員擋在門外
     if (memberRes.error) return { ok: false, error: memberRes.error.message };
     if (adminRes.error) return { ok: false, error: adminRes.error.message };
+
     const isAdmin = !!adminRes.data;
-    let paid = false;
-    if (memberRes.data) {
-      const exp = memberRes.data.expires_at;
-      if (!exp || new Date(exp).getTime() >= Date.now()) {
-        paid = PAID_TIERS.includes(memberRes.data.tier);
-      }
+    if (isAdmin) {
+      return {
+        ok: true,
+        allowed: true,
+        isAdmin: true,
+        identity: signedInIdentity(memberRes.data),
+        required: toolAccess.ok ? toolAccess.required : null,
+        accessSource: toolAccess.ok ? toolAccess.source : 'admin',
+      };
     }
-    return { ok: true, allowed: isAdmin || paid, isAdmin };
+
+    if (!toolAccess.ok) return toolAccess;
+
+    const identity = signedInIdentity(memberRes.data);
+    const allowed =
+      toolAccess.source === 'formal'
+        ? identityAllows(identity, toolAccess.required)
+        : legacyPaidAccess(memberRes.data);
+
+    return {
+      ok: true,
+      allowed,
+      isAdmin: false,
+      identity,
+      required: toolAccess.required,
+      accessSource: toolAccess.source,
+    };
   } catch (e) {
     return { ok: false, error: e.message || String(e) };
   }
@@ -193,8 +245,8 @@ async function sendMagicLink() {
     $('btn-magiclink').textContent = '✓ 已寄出，請到信箱點連結';
   }
 }
-// 非會員攔截：不是丟一行紅字就算了，導去 Skool 付費頁
-const PLANS_URL = 'https://www.skool.com/blue-print/about';
+// 權限不足時回主站方案頁。金流尚未開放，不回接舊 Skool checkout。
+const PLANS_URL = 'https://ark-blueprint.com/plans';
 const CHOOSER_KEY = 'tradersim.forceChooser';
 
 // 「下次 Google 登入強制跳帳號選擇器」的旗標。放 sessionStorage 而不是記憶體：
@@ -213,12 +265,13 @@ function getForceChooser() {
   }
 }
 
-function showNotMember(email) {
+function showNotMember(email, message = '這個帳號目前沒有 K 棒回放使用權限。') {
   // overlay 可能已被 hideLogin() 藏起來（App 正在用，另一個帳號的 auth 事件飄進來），
   // 不先叫出來攔截卡會顯示在看不見的地方。
   showLogin();
   setForceChooser(true);
   $('nomember-email').textContent = email || '（未取得 Email）';
+  $('nomember-message').textContent = message;
   $('login-error').classList.remove('show');
   $('login-card').style.display = 'none';
   $('nomember-card').style.display = 'block';
@@ -286,7 +339,13 @@ async function handleAuthSuccess(sbUser) {
   }
   if (!m.allowed) {
     _handledUid = null;
-    showNotMember(sbUser.email);
+    const message =
+      m.accessSource === 'formal' && m.required === 'vip'
+        ? '這個工具目前需要 VIP 權限。'
+        : m.accessSource === 'formal' && m.required === 'member'
+          ? '這個工具目前需要登入一般會員。'
+          : '這個帳號目前沒有舊制 K 棒回放使用權限。';
+    showNotMember(sbUser.email, message);
     // 不 await：登出走網路，不能讓攔截畫面卡在轉圈。goPlans() 會在導頁前補等一下。
     store._signOutPromise = window.sb.auth.signOut().catch(() => {});
     return;
@@ -324,18 +383,54 @@ async function handleAuthSuccess(sbUser) {
   }
 }
 
+async function handleSignedOutAccess() {
+  _handledUid = null;
+  const access = await fetchToolAccessRequirement();
+  if (!access.ok) {
+    showLogin();
+    showLoginError('權限設定暫時無法確認，請重新整理再試（' + access.error + '）');
+    return;
+  }
+
+  // 0113 尚未上線或目前最低權限不是 visitor → 保留登入 Gate。
+  if (access.source !== 'formal' || access.required !== 'visitor') {
+    showLogin();
+    return;
+  }
+
+  // 公開模式必須和會員本機資料隔離。storage.js 會使用 guest namespace。
+  state.guestMode = true;
+  setUser(null);
+  hideLogin();
+  if (!_appBooted) {
+    await bootApp();
+    _appBooted = true;
+  }
+}
+
 function setupAuthListener() {
   if (!window.sb) return;
   window.sb.auth.onAuthStateChange((event, session) => {
     if (session && session.user) {
+      state.guestMode = false;
       // 歸屬上報早於會員檢查：非會員新註冊者也要留下歸屬，他日後付費時
       // 推薦人才算數。fire-and-forget，不擋登入。
       if (window.arkReportReferral) window.arkReportReferral();
       // 登入成功 / 頁面重整已有 session / magic link 回跳 — 都走會員檢查 + 載入
       handleAuthSuccess(session.user);
+      return;
+    }
+
+    if (event === 'SIGNED_OUT' && _appBooted) {
+      // 已載入過會員資料的分頁先整頁重啟，再決定能否以 visitor 模式進入；
+      // 避免同一個 JS state 把上一位會員的本機交易顯示給訪客。
+      location.reload();
+      return;
+    }
+    if (event === 'INITIAL_SESSION' || event === 'SIGNED_OUT') {
+      handleSignedOutAccess();
     }
   });
-  // onAuthStateChange 對既有 session 會發 INITIAL_SESSION，上面已涵蓋
 }
 
 // ---------- Settings actions ----------
