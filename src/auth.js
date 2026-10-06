@@ -32,9 +32,52 @@ function setUser(u) {
   }
 }
 
-// 會員資格判定：與方舟主站 fetchMembershipOnce 同一套規則
-// （members.tier ∈ 付費方案 且 expires_at 未過期，或 admin_users 有列）
+// 會員資格判定：與方舟主站同一套有效期限規則。
 const PAID_TIERS = ['starter', 'vip', 'pro', 'private'];
+const VIP_TIERS = ['vip', 'pro', 'private'];
+const TOOL_ACCESS_KEY = 'trader-sim';
+const TOOL_ACCESS_FALLBACK = 'legacy_paid';
+
+let _toolAccessPromise = null;
+
+async function fetchToolAccessRequirement() {
+  if (!window.sb) return TOOL_ACCESS_FALLBACK;
+  try {
+    const { data, error } = await window.sb.rpc('get_tool_access_settings');
+    if (error || !data || typeof data !== 'object' || !Array.isArray(data.settings)) {
+      return TOOL_ACCESS_FALLBACK;
+    }
+    const row = data.settings.find(
+      (item) =>
+        item &&
+        item.surface === 'external' &&
+        item.toolKey === TOOL_ACCESS_KEY,
+    );
+    const requirement = row?.minIdentity;
+    return ['visitor', 'member', 'vip', 'legacy_paid', 'disabled'].includes(requirement)
+      ? requirement
+      : TOOL_ACCESS_FALLBACK;
+  } catch {
+    // 中央設定讀不到時維持改版前「有效訂閱會員」門檻，不擴權。
+    return TOOL_ACCESS_FALLBACK;
+  }
+}
+
+function getToolAccessRequirement() {
+  if (!_toolAccessPromise) _toolAccessPromise = fetchToolAccessRequirement();
+  return _toolAccessPromise;
+}
+
+function toolRequirementAllows(requirement, input) {
+  if (input.isAdmin) return true;
+  if (requirement === 'disabled') return false;
+  if (requirement === 'visitor') return true;
+  if (!input.authenticated) return false;
+  if (requirement === 'member') return true;
+  if (requirement === 'legacy_paid') return PAID_TIERS.includes(input.tier);
+  return VIP_TIERS.includes(input.tier);
+}
+
 async function fetchMembership(email, uid) {
   if (!window.sb) return { ok: false, error: 'Supabase 尚未載入' };
   try {
@@ -46,18 +89,23 @@ async function fetchMembership(email, uid) {
         .maybeSingle(),
       window.sb.from('admin_users').select('role').eq('user_id', uid).maybeSingle(),
     ]);
-    // 查詢錯誤 ≠ 非會員：網路閃斷不能把付費會員擋在門外
     if (memberRes.error) return { ok: false, error: memberRes.error.message };
     if (adminRes.error) return { ok: false, error: adminRes.error.message };
-    const isAdmin = !!adminRes.data;
-    let paid = false;
+
+    let tier = null;
     if (memberRes.data) {
       const exp = memberRes.data.expires_at;
       if (!exp || new Date(exp).getTime() >= Date.now()) {
-        paid = PAID_TIERS.includes(memberRes.data.tier);
+        tier = memberRes.data.tier;
       }
     }
-    return { ok: true, allowed: isAdmin || paid, isAdmin };
+    const isAdmin = !!adminRes.data;
+    return {
+      ok: true,
+      isAdmin,
+      tier,
+      allowed: isAdmin || PAID_TIERS.includes(tier),
+    };
   } catch (e) {
     return { ok: false, error: e.message || String(e) };
   }
@@ -265,34 +313,20 @@ async function doSignOut() {
 
 let _appBooted = false;
 let _handledUid = null;
-async function handleAuthSuccess(sbUser) {
-  if (_handledUid === sbUser.id) return; // token refresh 等事件重複觸發時跳過
-  _handledUid = sbUser.id;
-  // 沒有 email 就無從比對訂閱（fetchMembership 會在 email.toLowerCase() 直接 throw，
-  // 被吃成「連線異常」把 TypeError 噴到畫面上）。當成非會員擋下才是對的。
-  if (!sbUser.email) {
-    _handledUid = null;
-    showNotMember('');
-    store._signOutPromise = window.sb.auth.signOut().catch(() => {});
-    return;
+
+async function enterGuestMode() {
+  state.guestMode = true;
+  setUser(null);
+  backToLogin();
+  hideLogin();
+  if (!_appBooted) {
+    await bootApp();
+    _appBooted = true;
   }
-  // 會員資格檢查（= 白名單同步方舟訂閱會員）
-  const m = await fetchMembership(sbUser.email, sbUser.id);
-  if (!m.ok) {
-    _handledUid = null;
-    backToLogin();
-    showLoginError('連線異常，請重新整理再試（' + m.error + '）');
-    return;
-  }
-  if (!m.allowed) {
-    _handledUid = null;
-    showNotMember(sbUser.email);
-    // 不 await：登出走網路，不能讓攔截畫面卡在轉圈。goPlans() 會在導頁前補等一下。
-    store._signOutPromise = window.sb.auth.signOut().catch(() => {});
-    return;
-  }
-  // 走到這裡＝有效會員。若這一輪曾顯示過攔截卡（例如跨分頁先被錯帳號擋過），
-  // 先把兩張卡還原，之後 overlay 再顯示時才不會是一張空白/錯誤的卡。
+}
+
+async function renderSignedInApp(sbUser, isAdmin) {
+  state.guestMode = false;
   backToLogin();
   setForceChooser(false);
   const meta = sbUser.user_metadata || {};
@@ -301,21 +335,17 @@ async function handleAuthSuccess(sbUser) {
     email: sbUser.email,
     name: meta.name || meta.full_name || (sbUser.email ? sbUser.email.split('@')[0] : '會員'),
     photoURL: meta.avatar_url || meta.picture || null,
-    isAdmin: m.isAdmin,
+    isAdmin,
   });
-  // Pull cloud data (if any) — overlays onto local
   await loadFromCloud(sbUser.id);
-  // Persist merged state to localStorage too（也會 queue 一次雲端存檔：本地舊資料自動上雲）
   saveStorage();
   hideLogin();
   if (!_appBooted) {
     await bootApp();
     _appBooted = true;
   } else if (state.blind && store.SYMBOLS[state.blind.symbol]) {
-    // 雲端還原了進行中的盲測
     await enterBlindReplay();
   } else {
-    // Re-render
     if (state.candles?.length) renderChart();
     renderPositions();
     renderTrades();
@@ -324,18 +354,81 @@ async function handleAuthSuccess(sbUser) {
   }
 }
 
+async function handleAuthSuccess(sbUser) {
+  if (_handledUid === sbUser.id) return;
+  _handledUid = sbUser.id;
+  const requirement = await getToolAccessRequirement();
+
+  if (window.arkReportReferral) window.arkReportReferral();
+
+  // 公開模式允許無 email 帳號退回純訪客；其他模式需要可識別帳號。
+  if (!sbUser.email) {
+    _handledUid = null;
+    if (requirement === 'visitor') {
+      await enterGuestMode();
+      return;
+    }
+    showNotMember('');
+    return;
+  }
+
+  if (requirement === 'visitor' || requirement === 'member') {
+    await renderSignedInApp(sbUser, false);
+    return;
+  }
+
+  const m = await fetchMembership(sbUser.email, sbUser.id);
+  if (!m.ok) {
+    _handledUid = null;
+    backToLogin();
+    showLoginError('連線異常，請重新整理再試（' + m.error + '）');
+    return;
+  }
+  if (
+    !toolRequirementAllows(requirement, {
+      authenticated: true,
+      isAdmin: m.isAdmin,
+      tier: m.tier,
+    })
+  ) {
+    _handledUid = null;
+    showNotMember(sbUser.email);
+    return;
+  }
+
+  await renderSignedInApp(sbUser, m.isAdmin);
+}
+
 function setupAuthListener() {
   if (!window.sb) return;
-  window.sb.auth.onAuthStateChange((event, session) => {
-    if (session && session.user) {
-      // 歸屬上報早於會員檢查：非會員新註冊者也要留下歸屬，他日後付費時
-      // 推薦人才算數。fire-and-forget，不擋登入。
-      if (window.arkReportReferral) window.arkReportReferral();
-      // 登入成功 / 頁面重整已有 session / magic link 回跳 — 都走會員檢查 + 載入
-      handleAuthSuccess(session.user);
+
+  void (async () => {
+    const requirement = await getToolAccessRequirement();
+    const { data, error } = await window.sb.auth.getSession();
+    if (error) {
+      showLoginError('登入狀態讀取失敗，請重新整理再試');
+      return;
     }
+    if (data.session?.user) {
+      await handleAuthSuccess(data.session.user);
+    } else if (requirement === 'visitor') {
+      await enterGuestMode();
+    } else {
+      showLogin();
+    }
+  })();
+
+  window.sb.auth.onAuthStateChange((_event, session) => {
+    if (session?.user) {
+      void handleAuthSuccess(session.user);
+      return;
+    }
+    _handledUid = null;
+    void getToolAccessRequirement().then((requirement) => {
+      if (requirement === 'visitor') void enterGuestMode();
+      else showLogin();
+    });
   });
-  // onAuthStateChange 對既有 session 會發 INITIAL_SESSION，上面已涵蓋
 }
 
 // ---------- Settings actions ----------
