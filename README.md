@@ -77,8 +77,9 @@
 ### 帳號與雲端同步（方舟藍圖 Supabase，完全整合）
 
 - **與方舟藍圖同一組帳號**：Google 登入或 Email magic link
-- **白名單＝方舟訂閱會員**：`members` 表 tier ∈ 付費方案且未過期（或 admin）即可進入，
-  不需要手動維護白名單；訂閱過期自動擋
+- **權限＝方舟集中工具設定**：主站 `tool_access_settings` 的
+  `external / trader-sim` 可設公開 / 一般會員 / VIP，admin 一律放行。
+  0113 尚未套用前會自動沿用舊制「有效訂閱會員」Gate，不因 rollout 順序中斷服務
 - 跨裝置同步：交易、畫線、指標設定、模板、盲測進度都存 `tradersim_states`（debounce 1.5s upsert）
 - **教練檢視**：方舟後台 `/admin/tradersim` 直接看所有學員的績效摘要、交易明細、盲測歷史
 
@@ -183,8 +184,9 @@ data/                   K 棒資料（約 28MB，已納入版控）
 
 ### 3. 學員權限
 
-不用設定。學員在方舟藍圖是有效訂閱會員（starter/vip/pro/private 未過期）
-就能登入練功房；教練/管理員（`admin_users`）一律放行。
+正式權限由方舟主站後台「工具權限」統一設定：K 棒回放可切成公開、一般會員或 VIP。
+管理員（`admin_users`）一律放行。主站 migration 0113 尚未套用時，練功房會
+fail-safe 回到既有的有效訂閱會員 Gate；不會因新設定尚未部署而把現有會員鎖死。
 
 ## 資料結構（Supabase `tradersim_states`，每學員一列）
 
