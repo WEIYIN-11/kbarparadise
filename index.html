@@ -78,23 +78,22 @@
         </div>
         <div class="login-hint">
           使用<strong>方舟藍圖</strong>同一組帳號登入<br />
-          僅限有效訂閱會員使用；尚未訂閱請先至 ark-blueprint.com
+          K 棒回放權限由方舟後台統一設定；登入後會依目前身分判斷
         </div>
       </div>
 
-      <!-- 非會員：登入成功但沒有有效訂閱 → 顯示原因後自動導向 Skool -->
+      <!-- 權限不足：依主站 centralized tool access 顯示原因 -->
       <div class="login-card" id="nomember-card">
         <div class="login-logo">🔒</div>
-        <h1>會員權限尚未啟動</h1>
-        <p>帳號登入成功，但這個 Email 沒有有效的訂閱記錄</p>
+        <h1>K 棒回放權限尚未開放</h1>
+        <p id="nomember-message">這個帳號目前沒有 K 棒回放使用權限。</p>
         <div class="nomember-email" id="nomember-email"></div>
-        <button id="btn-plans" class="btn-plans">去加入會員</button>
+        <button id="btn-plans" class="btn-plans">查看服務方案</button>
         <div class="nomember-count" id="nomember-count"></div>
         <button id="btn-switch-account" class="btn-guest">換一個帳號登入</button>
         <div class="login-hint">
-          剛在 Skool 完成付款？系統 5 分鐘內自動同步，稍候重新整理本頁即可。<br />
-          若你在 Skool 用的是<strong>另一個 Email</strong>（例如 Google
-          選到別的帳號），請點上面「換一個帳號登入」或聯絡教練。
+          若管理員剛調整你的會員 / VIP 權限，請稍候重新整理本頁。<br />
+          若登入的是<strong>另一個 Email</strong>，請點上面「換一個帳號登入」或聯絡教練。
         </div>
       </div>
     </div>
