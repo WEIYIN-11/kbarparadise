@@ -162,6 +162,13 @@ function wireEvents() {
 
 // ---------- Login flow ----------
 function wireLogin() {
+  // Hero 次要 CTA：展開盲測說明，不開測驗、不碰登入
+  $('btn-blind-info').addEventListener('click', () => {
+    const panel = $('blind-explain');
+    const open = panel.hidden;
+    panel.hidden = !open;
+    $('btn-blind-info').setAttribute('aria-expanded', String(open));
+  });
   $('btn-google').addEventListener('click', () => {
     doGoogleSignIn();
   });
