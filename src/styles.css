@@ -217,6 +217,231 @@ textarea {
 }
 
 /* ==========================
+   Hero CTA（登入遮罩的外殼，2026-10-13）
+   桌機：介紹在左、登入卡在右；手機：標題 → 登入卡 → 特色與流程
+========================== */
+.hero-wrap {
+  width: min(1040px, 92%);
+  margin: auto 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(300px, 0.85fr);
+  grid-template-areas:
+    'intro login'
+    'more login';
+  column-gap: 40px;
+  row-gap: 28px;
+  align-items: start;
+}
+.hero-intro {
+  grid-area: intro;
+}
+.hero-login {
+  grid-area: login;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+.hero-login .login-card {
+  width: 100%;
+  max-width: none;
+}
+.hero-more {
+  grid-area: more;
+}
+.hero-brand {
+  display: inline-block;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-2);
+  color: var(--text-2);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+.hero-title {
+  margin: 18px 0 0;
+  font-size: clamp(30px, 4.6vw, 46px);
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+.hero-sub {
+  margin: 16px 0 0;
+  max-width: 560px;
+  font-size: 15px;
+  line-height: 1.75;
+  color: var(--text-2);
+}
+.hero-aux {
+  margin: 12px 0 0;
+  padding-left: 12px;
+  border-left: 2px solid var(--accent);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+.hero-chart {
+  display: block;
+  width: 100%;
+  max-width: 560px;
+  height: auto;
+  margin-bottom: 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-2);
+}
+.hero-chart .hc-grid line {
+  stroke: var(--bg-4);
+  stroke-width: 1;
+}
+.hero-chart .hc-up line,
+.hero-chart .hc-down line,
+.hero-chart .hc-ghost line {
+  stroke-width: 1.4;
+}
+.hero-chart .hc-up line,
+.hero-chart .hc-up rect {
+  stroke: var(--accent-2);
+  fill: var(--accent-2);
+}
+.hero-chart .hc-down line,
+.hero-chart .hc-down rect {
+  stroke: var(--danger);
+  fill: var(--danger);
+}
+.hero-chart .hc-ghost line,
+.hero-chart .hc-ghost rect {
+  stroke: var(--text-3);
+  fill: none;
+  stroke-dasharray: 2 2;
+}
+.hero-chart .hc-cursor {
+  stroke: var(--gold);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.hero-chart .hc-mark text {
+  font-size: 9px;
+  fill: var(--text-2);
+}
+.hero-chart .hc-mark-long polygon {
+  fill: var(--accent-2);
+}
+.hero-chart .hc-mark-exit polygon {
+  fill: var(--gold);
+}
+.hero-features {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.hero-features li {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-2);
+}
+.hero-features strong {
+  display: block;
+  font-size: 13px;
+  color: var(--text);
+}
+.hero-features span {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+.hero-flow {
+  list-style: none;
+  margin: 18px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 26px;
+  font-size: 12.5px;
+  color: var(--text);
+}
+.hero-flow li {
+  position: relative;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-3);
+}
+.hero-flow li:not(:last-child)::after {
+  content: '›';
+  position: absolute;
+  right: -18px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-3);
+}
+.hero-flow-note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.hero-secondary {
+  margin-top: 16px;
+  padding: 9px 14px;
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 13px;
+}
+.hero-secondary:hover,
+.hero-secondary[aria-expanded='true'] {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.hero-explain {
+  margin-top: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--accent);
+  border-radius: 10px;
+  background: var(--bg-2);
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-2);
+}
+.hero-explain strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text);
+}
+/* 901–1100px（大手機橫向）左欄只剩 ~450px，三張特色卡擠成一欄比較好讀 */
+@media (max-width: 1100px) {
+  .hero-features {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 900px) {
+  .hero-wrap {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      'intro'
+      'login'
+      'more';
+    row-gap: 22px;
+  }
+  .hero-login .login-card {
+    max-width: 420px;
+    margin: 0 auto;
+  }
+  .hero-features {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ==========================
    App shell layout
 ========================== */
 #app {

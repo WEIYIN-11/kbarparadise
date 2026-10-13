@@ -40,63 +40,179 @@
      LOGIN OVERLAY
 ========================== -->
     <div id="login-overlay">
-      <div class="login-card" id="login-card">
-        <div class="login-logo">📈</div>
-        <h1>練功房</h1>
-        <p>歷史 K 棒模擬訓練 · 方舟藍圖會員專屬</p>
-        <div id="login-error" class="login-error"></div>
-        <button id="btn-google" class="btn-google">
-          <svg width="18" height="18" viewBox="0 0 24 24">
-            <path
-              fill="#4285F4"
-              d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-            />
-            <path
-              fill="#34A853"
-              d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-            />
-            <path
-              fill="#FBBC05"
-              d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-            />
-            <path
-              fill="#EA4335"
-              d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-            />
-          </svg>
-          使用 Google 帳號登入
-        </button>
-        <div class="login-divider">或用 Email 收登入連結</div>
-        <div class="login-email-row">
-          <input
-            type="email"
-            id="login-email"
-            placeholder="你在方舟藍圖使用的 Email"
-            autocomplete="email"
-          />
-          <button id="btn-magiclink" class="btn-guest" style="margin-top: 8px">寄送登入連結</button>
-        </div>
-        <div class="login-hint">
-          使用<strong>方舟藍圖</strong>同一組帳號登入<br />
-          <!-- 這句跟著實際門檻變，由 auth.js 的 getToolAccessRequirement() 填入 -->
-          <span id="login-access-note"></span>
-        </div>
-      </div>
+      <!-- Hero CTA（2026-10-13）：未登入時介紹產品，登入後直接用產品。
+           已登入且有權限的人不會看到這層 —— auth.js 讀到 session 就 hideLogin()，
+           盲測進度、雲端同步、權限判定全部沿用原邏輯，這裡只是外殼。
+           手機版靠 grid-template-areas 把登入卡排在介紹之後、特色與流程之前。 -->
+      <div class="hero-wrap">
+        <section class="hero-intro" aria-labelledby="hero-title">
+          <div class="hero-brand">練功房｜K 棒回放 · 交易模擬訓練</div>
+          <h1 id="hero-title" class="hero-title">市場無法重來，交易可以反覆練習。</h1>
+          <p class="hero-sub">
+            利用歷史 K
+            棒逐根回放，練習進出場、停損與部位管理。搭配隨機盲測與績效報告，讓每一次交易決策都有機會被檢驗。
+          </p>
+          <p class="hero-aux">不需要投入真實資金，也能在模擬環境中練習面對市場變化。</p>
+        </section>
 
-      <!-- 非會員：登入成功但沒有有效訂閱 → 顯示原因後自動導向 Skool -->
-      <div class="login-card" id="nomember-card">
-        <div class="login-logo">🔒</div>
-        <h1>會員權限尚未啟動</h1>
-        <p>帳號登入成功，但這個 Email 沒有有效的訂閱記錄</p>
-        <div class="nomember-email" id="nomember-email"></div>
-        <button id="btn-plans" class="btn-plans">去加入會員</button>
-        <div class="nomember-count" id="nomember-count"></div>
-        <button id="btn-switch-account" class="btn-guest">換一個帳號登入</button>
-        <div class="login-hint">
-          剛在 Skool 完成付款？系統 5 分鐘內自動同步，稍候重新整理本頁即可。<br />
-          若你在 Skool 用的是<strong>另一個 Email</strong>（例如 Google
-          選到別的帳號），請點上面「換一個帳號登入」或聯絡教練。
+        <div class="hero-login">
+          <div class="login-card" id="login-card">
+            <div class="login-logo">📈</div>
+            <h1>開始 K 棒練習</h1>
+            <p>用方舟藍圖帳號登入，直接進入練習工作區</p>
+            <div id="login-error" class="login-error"></div>
+            <button id="btn-google" class="btn-google">
+              <svg width="18" height="18" viewBox="0 0 24 24">
+                <path
+                  fill="#4285F4"
+                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                />
+                <path
+                  fill="#FBBC05"
+                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+                />
+                <path
+                  fill="#EA4335"
+                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                />
+              </svg>
+              使用 Google 帳號登入
+            </button>
+            <div class="login-divider">或用 Email 收登入連結</div>
+            <div class="login-email-row">
+              <input
+                type="email"
+                id="login-email"
+                placeholder="你在方舟藍圖使用的 Email"
+                autocomplete="email"
+              />
+              <button id="btn-magiclink" class="btn-guest" style="margin-top: 8px"
+                >寄送登入連結</button
+              >
+            </div>
+            <div class="login-hint">
+              使用<strong>方舟藍圖</strong>同一組帳號登入<br />
+              <!-- 這句跟著實際門檻變，由 auth.js 的 getToolAccessRequirement() 填入 -->
+              <span id="login-access-note"></span>
+            </div>
+          </div>
+
+          <!-- 非會員：登入成功但沒有有效訂閱 → 顯示原因後自動導向 Skool -->
+          <div class="login-card" id="nomember-card">
+            <div class="login-logo">🔒</div>
+            <h1>會員權限尚未啟動</h1>
+            <p>帳號登入成功，但這個 Email 沒有有效的訂閱記錄</p>
+            <div class="nomember-email" id="nomember-email"></div>
+            <button id="btn-plans" class="btn-plans">去加入會員</button>
+            <div class="nomember-count" id="nomember-count"></div>
+            <button id="btn-switch-account" class="btn-guest">換一個帳號登入</button>
+            <div class="login-hint">
+              剛在 Skool 完成付款？系統 5 分鐘內自動同步，稍候重新整理本頁即可。<br />
+              若你在 Skool 用的是<strong>另一個 Email</strong>（例如 Google
+              選到別的帳號），請點上面「換一個帳號登入」或聯絡教練。
+            </div>
+          </div>
         </div>
+
+        <section class="hero-more" aria-label="練功房功能與流程">
+          <!-- 功能示意圖：純裝飾，不帶任何收益數字 -->
+          <svg class="hero-chart" viewBox="0 0 320 110" aria-hidden="true" focusable="false">
+            <g class="hc-grid">
+              <line x1="0" y1="30" x2="320" y2="30" />
+              <line x1="0" y1="60" x2="320" y2="60" />
+              <line x1="0" y1="90" x2="320" y2="90" />
+            </g>
+            <g class="hc-up">
+              <line x1="20" y1="70" x2="20" y2="96" />
+              <rect x="15" y="76" width="10" height="14" />
+              <line x1="60" y1="52" x2="60" y2="84" />
+              <rect x="55" y="58" width="10" height="20" />
+              <line x1="120" y1="40" x2="120" y2="74" />
+              <rect x="115" y="46" width="10" height="22" />
+              <line x1="200" y1="26" x2="200" y2="58" />
+              <rect x="195" y="30" width="10" height="20" />
+              <line x1="240" y1="18" x2="240" y2="48" />
+              <rect x="235" y="22" width="10" height="18" />
+            </g>
+            <g class="hc-down">
+              <line x1="40" y1="60" x2="40" y2="92" />
+              <rect x="35" y="64" width="10" height="20" />
+              <line x1="80" y1="56" x2="80" y2="80" />
+              <rect x="75" y="60" width="10" height="12" />
+              <line x1="100" y1="48" x2="100" y2="78" />
+              <rect x="95" y="52" width="10" height="20" />
+              <line x1="140" y1="42" x2="140" y2="70" />
+              <rect x="135" y="48" width="10" height="16" />
+              <line x1="160" y1="38" x2="160" y2="66" />
+              <rect x="155" y="42" width="10" height="18" />
+              <line x1="180" y1="36" x2="180" y2="62" />
+              <rect x="175" y="40" width="10" height="14" />
+              <line x1="220" y1="20" x2="220" y2="52" />
+              <rect x="215" y="26" width="10" height="20" />
+              <line x1="260" y1="22" x2="260" y2="50" />
+              <rect x="255" y="28" width="10" height="16" />
+            </g>
+            <g class="hc-ghost">
+              <line x1="280" y1="24" x2="280" y2="54" />
+              <rect x="275" y="30" width="10" height="16" />
+              <line x1="300" y1="18" x2="300" y2="48" />
+              <rect x="295" y="24" width="10" height="14" />
+            </g>
+            <line class="hc-cursor" x1="270" y1="6" x2="270" y2="104" />
+            <g class="hc-mark hc-mark-long">
+              <polygon points="60,100 55,108 65,108" />
+              <text x="60" y="88" text-anchor="middle">進場</text>
+            </g>
+            <g class="hc-mark hc-mark-exit">
+              <polygon points="240,10 235,2 245,2" />
+              <text x="240" y="60" text-anchor="middle">出場</text>
+            </g>
+          </svg>
+
+          <ul class="hero-features">
+            <li>
+              <strong>歷史 K 棒回放</strong>
+              <span>逐根播放歷史走勢，練習在不知道後續價格變化的情況下進行交易判斷。</span>
+            </li>
+            <li>
+              <strong>隨機盲測訓練</strong>
+              <span>隨機抽取標的與歷史時間，隱藏標的名稱及日期，減少事後偏誤。</span>
+            </li>
+            <li>
+              <strong>交易績效檢討</strong>
+              <span
+                >記錄模擬交易結果，檢視勝率、盈虧、R 倍數及風險表現，協助找出需要改善的地方。</span
+              >
+            </li>
+          </ul>
+
+          <ol class="hero-flow" aria-label="練習流程">
+            <li>選擇標的或盲測</li>
+            <li>逐根回放</li>
+            <li>模擬交易</li>
+            <li>查看績效</li>
+          </ol>
+          <p class="hero-flow-note">從市場觀察到交易檢討，建立可反覆練習的決策流程。</p>
+
+          <button
+            type="button"
+            id="btn-blind-info"
+            class="hero-secondary"
+            aria-expanded="false"
+            aria-controls="blind-explain"
+          >
+            了解盲測模式
+          </button>
+          <div id="blind-explain" class="hero-explain" hidden>
+            <strong>盲測模式是什麼？</strong>
+            系統隨機抽一個標的、一段歷史區間，把名稱和日期藏起來，只給你 K
+            棒。你一根一根往後播、照平常的方法進出場；結束後才揭曉是哪檔、哪段時間，並附上這一局的績效報告。因為事前不知道答案，練的是當下的判斷，不是記憶。登入後可以直接開一局，也可以選「跳過，自由練習」。
+          </div>
+        </section>
       </div>
     </div>
 
