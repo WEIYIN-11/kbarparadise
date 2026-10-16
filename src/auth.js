@@ -34,7 +34,6 @@ function setUser(u) {
 
 // 會員資格判定：與方舟主站同一套有效期限規則。
 const PAID_TIERS = ['starter', 'vip', 'pro', 'private'];
-const VIP_TIERS = ['vip', 'pro', 'private'];
 const TOOL_ACCESS_KEY = 'trader-sim';
 // 中央設定讀不到時的門檻。2026-10-06 由站主決定改為 member（有方舟藍圖帳號即可用）：
 // 中央設定所需的 migration 0109/0113 尚未套用到正式資料庫，後台切換存不進去，
@@ -94,22 +93,28 @@ function toolRequirementAllows(requirement, input) {
   if (!input.authenticated) return false;
   if (requirement === 'member') return true;
   if (requirement === 'legacy_paid') return PAID_TIERS.includes(input.tier);
-  return VIP_TIERS.includes(input.tier);
+  // VIP authority is the same server-issued identity used by the main site.
+  return input.identity === 'vip';
 }
 
 async function fetchMembership(email, uid) {
   if (!window.sb) return { ok: false, error: 'Supabase 尚未載入' };
   try {
-    const [memberRes, adminRes] = await Promise.all([
+    const [memberRes, adminRes, identityRes] = await Promise.all([
       window.sb
         .from('members')
         .select('tier, expires_at')
         .eq('email', email.toLowerCase())
         .maybeSingle(),
       window.sb.from('admin_users').select('role').eq('user_id', uid).maybeSingle(),
+      window.sb.rpc('current_front_identity'),
     ]);
     if (memberRes.error) return { ok: false, error: memberRes.error.message };
     if (adminRes.error) return { ok: false, error: adminRes.error.message };
+    if (identityRes.error) return { ok: false, error: identityRes.error.message };
+    if (identityRes.data !== 'member' && identityRes.data !== 'vip') {
+      return { ok: false, error: '無法確認目前的會員身分，請重新登入。' };
+    }
 
     let tier = null;
     if (memberRes.data) {
@@ -123,7 +128,8 @@ async function fetchMembership(email, uid) {
       ok: true,
       isAdmin,
       tier,
-      allowed: isAdmin || PAID_TIERS.includes(tier),
+      allowed: isAdmin || identityRes.data === 'vip',
+      identity: identityRes.data,
     };
   } catch (e) {
     return { ok: false, error: e.message || String(e) };
@@ -408,6 +414,7 @@ async function handleAuthSuccess(sbUser) {
       authenticated: true,
       isAdmin: m.isAdmin,
       tier: m.tier,
+      identity: m.identity,
     })
   ) {
     _handledUid = null;
