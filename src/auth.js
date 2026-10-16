@@ -41,6 +41,17 @@ const TOOL_ACCESS_KEY = 'trader-sim';
 // ⚠ 0113 套上正式環境那一刻，trader-sim 的種子值是 legacy_paid，會立刻蓋過這裡、
 //   變回只限付費會員——屆時要同時到主站後台 /admin/tiers 把「K 棒回放」設為「一般會員」。
 const TOOL_ACCESS_FALLBACK = 'member';
+const AUTH_CHECK_TIMEOUT_MS = 10000;
+
+function withinAuthTimeout(pending) {
+  let timer;
+  return Promise.race([
+    pending,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('登入或會員驗證逾時')), AUTH_CHECK_TIMEOUT_MS);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
 
 let _toolAccessPromise = null;
 
@@ -382,7 +393,15 @@ async function renderSignedInApp(sbUser, isAdmin) {
 async function handleAuthSuccess(sbUser) {
   if (_handledUid === sbUser.id) return;
   _handledUid = sbUser.id;
-  const requirement = await getToolAccessRequirement();
+  let requirement;
+  try {
+    requirement = await withinAuthTimeout(getToolAccessRequirement());
+  } catch (error) {
+    _handledUid = null;
+    backToLogin();
+    showLoginError('登入權限讀取失敗，請重新整理再試');
+    return;
+  }
 
   if (window.arkReportReferral) window.arkReportReferral();
 
@@ -402,7 +421,12 @@ async function handleAuthSuccess(sbUser) {
     return;
   }
 
-  const m = await fetchMembership(sbUser.email, sbUser.id);
+  let m;
+  try {
+    m = await withinAuthTimeout(fetchMembership(sbUser.email, sbUser.id));
+  } catch {
+    m = { ok: false, error: '會員查詢逾時' };
+  }
   if (!m.ok) {
     _handledUid = null;
     backToLogin();
@@ -428,23 +452,32 @@ async function handleAuthSuccess(sbUser) {
 function setupAuthListener() {
   if (!window.sb) return;
 
+  let authEventVersion = 0;
   void (async () => {
-    const requirement = await getToolAccessRequirement();
-    const { data, error } = await window.sb.auth.getSession();
-    if (error) {
-      showLoginError('登入狀態讀取失敗，請重新整理再試');
-      return;
-    }
-    if (data.session?.user) {
-      await handleAuthSuccess(data.session.user);
-    } else if (requirement === 'visitor') {
-      await enterGuestMode();
-    } else {
-      showLogin();
+    const initialVersion = authEventVersion;
+    try {
+      const requirement = await withinAuthTimeout(getToolAccessRequirement());
+      const { data, error } = await withinAuthTimeout(window.sb.auth.getSession());
+      // Do not let a stale initial session overwrite a newer OAuth/sign-out event.
+      if (authEventVersion !== initialVersion) return;
+      if (error) throw error;
+      if (data.session?.user) {
+        await handleAuthSuccess(data.session.user);
+      } else if (requirement === 'visitor') {
+        await enterGuestMode();
+      } else {
+        showLogin();
+      }
+    } catch {
+      if (authEventVersion === initialVersion) {
+        showLogin();
+        showLoginError('登入狀態讀取失敗或逾時，請重新整理再試');
+      }
     }
   })();
 
   window.sb.auth.onAuthStateChange((_event, session) => {
+    authEventVersion += 1;
     if (session?.user) {
       void handleAuthSuccess(session.user);
       return;
