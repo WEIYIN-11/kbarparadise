@@ -396,7 +396,7 @@ async function handleAuthSuccess(sbUser) {
   let requirement;
   try {
     requirement = await withinAuthTimeout(getToolAccessRequirement());
-  } catch (error) {
+  } catch {
     _handledUid = null;
     backToLogin();
     showLoginError('登入權限讀取失敗，請重新整理再試');
