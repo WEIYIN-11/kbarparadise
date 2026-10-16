@@ -34,7 +34,6 @@ function setUser(u) {
 
 // 會員資格判定：與方舟主站同一套有效期限規則。
 const PAID_TIERS = ['starter', 'vip', 'pro', 'private'];
-const VIP_TIERS = ['vip', 'pro', 'private'];
 const TOOL_ACCESS_KEY = 'trader-sim';
 // 中央設定讀不到時的門檻。2026-10-06 由站主決定改為 member（有方舟藍圖帳號即可用）：
 // 中央設定所需的 migration 0109/0113 尚未套用到正式資料庫，後台切換存不進去，
@@ -42,6 +41,17 @@ const TOOL_ACCESS_KEY = 'trader-sim';
 // ⚠ 0113 套上正式環境那一刻，trader-sim 的種子值是 legacy_paid，會立刻蓋過這裡、
 //   變回只限付費會員——屆時要同時到主站後台 /admin/tiers 把「K 棒回放」設為「一般會員」。
 const TOOL_ACCESS_FALLBACK = 'member';
+const AUTH_CHECK_TIMEOUT_MS = 10000;
+
+function withinAuthTimeout(pending) {
+  let timer;
+  return Promise.race([
+    pending,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('登入或會員驗證逾時')), AUTH_CHECK_TIMEOUT_MS);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
 
 let _toolAccessPromise = null;
 
@@ -94,22 +104,28 @@ function toolRequirementAllows(requirement, input) {
   if (!input.authenticated) return false;
   if (requirement === 'member') return true;
   if (requirement === 'legacy_paid') return PAID_TIERS.includes(input.tier);
-  return VIP_TIERS.includes(input.tier);
+  // VIP authority is the same server-issued identity used by the main site.
+  return input.identity === 'vip';
 }
 
 async function fetchMembership(email, uid) {
   if (!window.sb) return { ok: false, error: 'Supabase 尚未載入' };
   try {
-    const [memberRes, adminRes] = await Promise.all([
+    const [memberRes, adminRes, identityRes] = await Promise.all([
       window.sb
         .from('members')
         .select('tier, expires_at')
         .eq('email', email.toLowerCase())
         .maybeSingle(),
       window.sb.from('admin_users').select('role').eq('user_id', uid).maybeSingle(),
+      window.sb.rpc('current_front_identity'),
     ]);
     if (memberRes.error) return { ok: false, error: memberRes.error.message };
     if (adminRes.error) return { ok: false, error: adminRes.error.message };
+    if (identityRes.error) return { ok: false, error: identityRes.error.message };
+    if (identityRes.data !== 'member' && identityRes.data !== 'vip') {
+      return { ok: false, error: '無法確認目前的會員身分，請重新登入。' };
+    }
 
     let tier = null;
     if (memberRes.data) {
@@ -123,7 +139,8 @@ async function fetchMembership(email, uid) {
       ok: true,
       isAdmin,
       tier,
-      allowed: isAdmin || PAID_TIERS.includes(tier),
+      allowed: isAdmin || identityRes.data === 'vip',
+      identity: identityRes.data,
     };
   } catch (e) {
     return { ok: false, error: e.message || String(e) };
@@ -376,7 +393,15 @@ async function renderSignedInApp(sbUser, isAdmin) {
 async function handleAuthSuccess(sbUser) {
   if (_handledUid === sbUser.id) return;
   _handledUid = sbUser.id;
-  const requirement = await getToolAccessRequirement();
+  let requirement;
+  try {
+    requirement = await withinAuthTimeout(getToolAccessRequirement());
+  } catch {
+    _handledUid = null;
+    backToLogin();
+    showLoginError('登入權限讀取失敗，請重新整理再試');
+    return;
+  }
 
   if (window.arkReportReferral) window.arkReportReferral();
 
@@ -396,7 +421,12 @@ async function handleAuthSuccess(sbUser) {
     return;
   }
 
-  const m = await fetchMembership(sbUser.email, sbUser.id);
+  let m;
+  try {
+    m = await withinAuthTimeout(fetchMembership(sbUser.email, sbUser.id));
+  } catch {
+    m = { ok: false, error: '會員查詢逾時' };
+  }
   if (!m.ok) {
     _handledUid = null;
     backToLogin();
@@ -408,6 +438,7 @@ async function handleAuthSuccess(sbUser) {
       authenticated: true,
       isAdmin: m.isAdmin,
       tier: m.tier,
+      identity: m.identity,
     })
   ) {
     _handledUid = null;
@@ -421,23 +452,32 @@ async function handleAuthSuccess(sbUser) {
 function setupAuthListener() {
   if (!window.sb) return;
 
+  let authEventVersion = 0;
   void (async () => {
-    const requirement = await getToolAccessRequirement();
-    const { data, error } = await window.sb.auth.getSession();
-    if (error) {
-      showLoginError('登入狀態讀取失敗，請重新整理再試');
-      return;
-    }
-    if (data.session?.user) {
-      await handleAuthSuccess(data.session.user);
-    } else if (requirement === 'visitor') {
-      await enterGuestMode();
-    } else {
-      showLogin();
+    const initialVersion = authEventVersion;
+    try {
+      const requirement = await withinAuthTimeout(getToolAccessRequirement());
+      const { data, error } = await withinAuthTimeout(window.sb.auth.getSession());
+      // Do not let a stale initial session overwrite a newer OAuth/sign-out event.
+      if (authEventVersion !== initialVersion) return;
+      if (error) throw error;
+      if (data.session?.user) {
+        await handleAuthSuccess(data.session.user);
+      } else if (requirement === 'visitor') {
+        await enterGuestMode();
+      } else {
+        showLogin();
+      }
+    } catch {
+      if (authEventVersion === initialVersion) {
+        showLogin();
+        showLoginError('登入狀態讀取失敗或逾時，請重新整理再試');
+      }
     }
   })();
 
   window.sb.auth.onAuthStateChange((_event, session) => {
+    authEventVersion += 1;
     if (session?.user) {
       void handleAuthSuccess(session.user);
       return;
